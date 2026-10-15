@@ -1,0 +1,396 @@
+pragma language_version >= 0.23;
+
+// ============================================================================
+// MedPass — anti-counterfeit medicine passport (Midnight / Compact)
+// ============================================================================
+//
+// GOAL
+//   Every medicine batch gets a cryptographic passport. A pharmacist scans a
+//   unit's QR code and learns, with a zero-knowledge proof, that:
+//     * the batch was created by a REGISTERED manufacturer (and by whom),
+//     * the unit really belongs to that batch,
+//     * the batch was imported through an AUTHORIZED importer,
+//     * the batch is NOT recalled,
+//     * and the unit has not already been dispensed (clone alarm).
+//   ...without the contract ever learning WHICH importer or pharmacy acted, nor
+//   the supplier contract terms, pricing, or dispensing history.
+//
+// WHAT IS PUBLIC ON-CHAIN vs PRIVATE (the whole reason to use Midnight)
+//   PUBLIC : which batches exist, the manufacturer of each batch, the unit-tree
+//            root and expiry of each batch, whether a batch is recalled, whether
+//            a batch was imported, and the set of dispensed-unit nullifiers.
+//   PRIVATE: importer identity, pharmacy identity, supplier contract terms,
+//            pricing, and which pharmacy dispensed which unit.
+//
+// ROLE / TRUST MODEL (mirrors the DareU nested-authority pattern)
+//   regulator — the NAFDAC-style root of trust. Sealed at deploy. The ONLY
+//               identity allowed to enroll parties (manufacturers/importers/
+//               pharmacies). Everything else is permissionless: a manufacturer
+//               can create batches, an importer can record imports, a pharmacy
+//               can dispense, and a batch can be recalled by the regulator or
+//               by the batch's own manufacturer.
+//
+// KEY / WITNESS MODEL (why secrets are witnesses, never arguments)
+//   In Compact, a circuit ARGUMENT is a PUBLIC input: it is part of the proof
+//   preimage and effectively visible on-chain. A secret key passed as an
+//   argument would therefore leak the identity it is meant to hide. Every
+//   secret here is supplied through a WITNESS instead, and only HASHES of
+//   witnesses are ever disclosed. That is what keeps the importer/pharmacy
+//   unlinkable.
+//
+// MERKLE REGISTRIES + REVOCATION
+//   The three party registries are live `MerkleTree<32, Bytes<32>>` ledgers. The
+//   regulator appends a commitment per party. A member proves membership with a
+//   private Merkle path (a witness) against the tree's CURRENT root, so the
+//   contract never learns which member is acting.
+//
+//   A Compact MerkleTree cannot delete a leaf, so revocation is done with a
+//   separate `revoked` set of party leaves. Every party circuit checks both
+//   `checkRoot` (the proof is against the live tree) and `!revoked.member(leaf)`
+//   (the party has not been struck off). `revoke_party` is regulator-only, so a
+//   pharmacy that loses its licence can be removed and its proof stops working.
+//   The registry leaf stays in the tree (append-only), but it is inert.
+//
+// UNIT TREES (why only a root is stored)
+//   A batch's units are a fixed-size off-chain Merkle tree. Only its root is
+//   stored in the batch record. The QR code carries a per-unit code plus its
+//   Merkle path to that root — NEVER a shared batch secret, because a shared
+//   secret in one genuine pack would let a counterfeiter forge every other unit.
+//   Tree leaves are commitments H("medpass:unit:", unit_code); raw unit codes
+//   are never on-chain, so reading the ledger does not let anyone forge a QR.
+//
+// CLONE DETECTION (the nullifier)
+//   `dispense` derives nullifier = H("medpass:null:", unit_commitment) IN-CIRCUIT
+//   (a pharmacy cannot choose it), and inserts it into `dispensed`. A second scan
+//   of a copied QR therefore reverts, which the pharmacist UI reports as CLONE.
+//
+// HONEST LIMITS (state these, do not hide them)
+//   * ZK cannot prove a physical pill is genuine. A counterfeiter who copies a
+//     valid QR and is scanned FIRST still passes; tamper-evident packaging is
+//     still required. Clone detection catches the second scan, not the first.
+//   * The regulator and the regulator's party enrollment are trusted roots.
+//   * Revocation is a set, not a tree deletion (a Compact MerkleTree cannot
+//     delete). A revoked party's leaf stays in the registry but is inert.
+//   * `expiry` IS enforced: `create_batch` requires a future expiry and every
+//     scan requires `kernel.blockTimeLessThan(expiry)`.
+// ============================================================================
+
+import CompactStandardLibrary;
+
+// Which registry a party belongs to.
+export enum PartyRole {
+  MANUFACTURER,
+  IMPORTER,
+  PHARMACY
+}
+
+// A batch is either dispensable or recalled (terminal).
+export enum BatchStatus {
+  ACTIVE,
+  RECALLED
+}
+
+// Everything a verifier needs about a batch. All fields are public by design.
+export struct BatchRecord {
+  manufacturer: Bytes<32>, // participant_id of the registering manufacturer
+  expiry: Uint<64>, // unix seconds after which the batch must not be dispensed
+  units_root: MerkleTreeDigest, // root of the batch's fixed-size unit tree
+  metadata_hash: Bytes<32>, // commitment to off-chain batch metadata (name, dose, ...)
+  status: BatchStatus
+}
+
+// The on-chain footprint of an import. Only an opaque commitment to the supplier
+// contract terms is stored — never the terms, the importer's identity, or pricing.
+export struct ImportPermit {
+  terms_commitment: Bytes<32> // H("medpass:terms:", contract_terms) — selectively disclosable to an auditor
+}
+
+// ---- Trust root (sealed: set once at deploy, never reassigned) ----
+export sealed ledger regulator: Bytes<32>; // participant_id of the regulator key
+
+// ---- Party registries: live Merkle trees of party commitments ----
+export ledger manufacturers: MerkleTree<32, Bytes<32>>;
+export ledger importers: MerkleTree<32, Bytes<32>>;
+export ledger pharmacies: MerkleTree<32, Bytes<32>>;
+
+// ---- Batch / import state ----
+export ledger batches: Map<Bytes<32>, BatchRecord>; // batch_id -> BatchRecord
+export ledger imports: Map<Bytes<32>, ImportPermit>; // batch_id -> ImportPermit (presence = imported)
+
+// ---- Dispensed-unit nullifiers (clone alarm) ----
+export ledger dispensed: Set<Bytes<32>>;
+
+// ---- Revoked party leaves (a revoked leaf is inert even though it stays in its
+//      registry tree, because a Compact MerkleTree cannot delete) ----
+export ledger revoked: Set<Bytes<32>>;
+
+export ledger batch_count: Counter; // total batches ever created
+export ledger party_count: Counter; // total parties ever enrolled
+
+// ---------------------------------------------------------------------------
+// Witnesses (private inputs; never written to chain)
+// ---------------------------------------------------------------------------
+
+// The acting party's private key. Supplied per call; only its hash is disclosed.
+witness caller_sk(): Bytes<32>;
+
+// A private Merkle path proving the caller's own commitment is in a registry.
+// The leaf inside the path is never disclosed, so the registry membership proof
+// does not reveal WHICH party is acting.
+witness manufacturer_path(): MerkleTreePath<32, Bytes<32>>;
+witness importer_path(): MerkleTreePath<32, Bytes<32>>;
+witness pharmacy_path(): MerkleTreePath<32, Bytes<32>>;
+
+// The scanned unit's private code. Committed in-circuit; the raw code stays off
+// the chain so the ledger cannot be used to forge a QR.
+witness unit_code(): Bytes<32>;
+
+// ---------------------------------------------------------------------------
+// Pure derivations (exported so the web app recomputes them off-chain)
+// ---------------------------------------------------------------------------
+
+// ZK identity of a secret key. Domain-tagged so it cannot collide with the
+// commitment hashes below.
+export pure circuit participant_id(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "medpass:participant:"), sk]);
+}
+
+// The leaf stored in a party registry for a given participant_id.
+export pure circuit party_leaf(party_id: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "medpass:party:"), party_id]);
+}
+
+// The leaf stored in a batch's unit tree for a given unit code. Commitments only,
+// so raw unit codes never touch the chain.
+export pure circuit unit_commitment(unit_code: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "medpass:unit:"), unit_code]);
+}
+
+// The one-time nullifier published when a unit is dispensed. Derived from the
+// unit commitment, so it is deterministic: the same physical QR always yields
+// the same nullifier and a replay is detectable.
+export pure circuit unit_nullifier(uc: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "medpass:null:"), uc]);
+}
+
+// ---------------------------------------------------------------------------
+// Identity helpers
+// ---------------------------------------------------------------------------
+
+// Aborts unless the caller's private key hashes to the sealed regulator id.
+circuit require_regulator(): [] {
+  const caller = disclose(participant_id(caller_sk()));
+  assert(regulator == caller, "Only the regulator can call this circuit");
+}
+
+// Binds the caller's key to `leaf`, proves `leaf` is in the live tree rooted at
+// `root`, and aborts if that leaf has been revoked. Tree-specific wrappers keep
+// each call site's error message clear and enforce "registered AND not revoked".
+circuit require_manufacturer(leaf: Bytes<32>, path: MerkleTreePath<32, Bytes<32>>, root: MerkleTreeDigest): [] {
+  assert(path.leaf == leaf, "Manufacturer path does not match caller");
+  assert(merkleTreePathRoot<32, Bytes<32>>(path) == root, "Manufacturer not registered");
+  assert(manufacturers.checkRoot(disclose(root)), "Stale manufacturer registry root");
+  assert(!revoked.member(disclose(leaf)), "Manufacturer is revoked");
+}
+
+circuit require_importer(leaf: Bytes<32>, path: MerkleTreePath<32, Bytes<32>>, root: MerkleTreeDigest): [] {
+  assert(path.leaf == leaf, "Importer path does not match caller");
+  assert(merkleTreePathRoot<32, Bytes<32>>(path) == root, "Importer not authorized");
+  assert(importers.checkRoot(disclose(root)), "Stale importer registry root");
+  assert(!revoked.member(disclose(leaf)), "Importer is revoked");
+}
+
+circuit require_pharmacy(leaf: Bytes<32>, path: MerkleTreePath<32, Bytes<32>>, root: MerkleTreeDigest): [] {
+  assert(path.leaf == leaf, "Pharmacy path does not match caller");
+  assert(merkleTreePathRoot<32, Bytes<32>>(path) == root, "Pharmacy not registered");
+  assert(pharmacies.checkRoot(disclose(root)), "Stale pharmacy registry root");
+  assert(!revoked.member(disclose(leaf)), "Pharmacy is revoked");
+}
+
+// ---------------------------------------------------------------------------
+// Constructor — seal the regulator and nothing else. Parties are enrolled later.
+// The regulator key is a witness, so the deploy transaction carries only its hash.
+// ---------------------------------------------------------------------------
+constructor() {
+  regulator = disclose(participant_id(caller_sk()));
+}
+
+// ---------------------------------------------------------------------------
+// 1) register_party — regulator-only enrollment into a registry.
+// ---------------------------------------------------------------------------
+export circuit register_party(role: PartyRole, party_id: Bytes<32>): [] {
+  require_regulator();
+
+  const r = disclose(role);
+  const leaf = disclose(party_leaf(party_id));
+
+  if (r == PartyRole.MANUFACTURER) {
+    manufacturers.insert(leaf);
+  } else if (r == PartyRole.IMPORTER) {
+    importers.insert(leaf);
+  } else {
+    pharmacies.insert(leaf);
+  }
+
+  // Re-enrolling a previously revoked party restores it.
+  if (revoked.member(leaf)) {
+    revoked.remove(leaf);
+  }
+
+  party_count.increment(1);
+}
+
+// ---------------------------------------------------------------------------
+// 1b) revoke_party — regulator-only. Strikes a party off so its proofs stop
+//     working: a pharmacy that loses its licence can no longer dispense, an
+//     importer can no longer record imports, and a manufacturer can no longer
+//     create batches. The leaf stays in its registry tree (a Compact MerkleTree
+//     cannot delete); the `revoked` set makes it inert.
+// ---------------------------------------------------------------------------
+export circuit revoke_party(party_id: Bytes<32>): [] {
+  require_regulator();
+
+  const leaf = disclose(party_leaf(party_id));
+  assert(!revoked.member(leaf), "Party already revoked");
+
+  revoked.insert(leaf);
+}
+
+// ---------------------------------------------------------------------------
+// 2) create_batch — a registered manufacturer commits a batch and its unit-tree
+//    root. Proves registry membership with a private path; publishes only the
+//    manufacturer id, expiry, unit root and metadata commitment.
+// ---------------------------------------------------------------------------
+export circuit create_batch(batch_id: Bytes<32>,
+                            manufacturer_root: MerkleTreeDigest,
+                            units_root: MerkleTreeDigest,
+                            expiry: Uint<64>,
+                            metadata_hash: Bytes<32>
+                            ): [] {
+  const mfr_id = participant_id(caller_sk());
+  const leaf = party_leaf(mfr_id);
+
+  // Bind the caller's key to a registered leaf, then prove that leaf is in the
+  // CURRENT manufacturer tree. Without the binding, a leaked path could be
+  // replayed by a non-member.
+  const path = manufacturer_path();
+  require_manufacturer(leaf, path, manufacturer_root);
+
+  assert(!batches.member(disclose(batch_id)), "Batch already exists");
+
+  // The expiry must be in the future at creation time.
+  assert(kernel.blockTimeLessThan(disclose(expiry)), "Expiry must be in the future");
+
+  batches.insert(
+    disclose(batch_id),
+    BatchRecord { manufacturer: disclose(mfr_id),
+                  expiry: disclose(expiry),
+                  units_root: disclose(units_root),
+                  metadata_hash: disclose(metadata_hash),
+                  status: BatchStatus.ACTIVE }
+    );
+
+  batch_count.increment(1);
+}
+
+// ---------------------------------------------------------------------------
+// 3) record_import — an authorized importer binds a batch to a commitment of the
+//    supplier contract terms. The importer's identity is NEVER disclosed.
+// ---------------------------------------------------------------------------
+export circuit record_import(batch_id: Bytes<32>,
+                             importer_root: MerkleTreeDigest,
+                             terms_commitment: Bytes<32>
+                             ): [] {
+  const imp_id = participant_id(caller_sk());
+  const leaf = party_leaf(imp_id);
+
+  const path = importer_path();
+  require_importer(leaf, path, importer_root);
+
+  assert(batches.member(disclose(batch_id)), "No such batch");
+  assert(!imports.member(disclose(batch_id)), "Batch already imported");
+
+  imports.insert(disclose(batch_id), ImportPermit { terms_commitment: disclose(terms_commitment) });
+}
+
+// ---------------------------------------------------------------------------
+// 4) recall_batch — the regulator or the batch's own manufacturer flags it.
+//    Terminal: a recalled batch can never be set back to ACTIVE.
+// ---------------------------------------------------------------------------
+export circuit recall_batch(batch_id: Bytes<32>): [] {
+  const bid = disclose(batch_id);
+  assert(batches.member(bid), "No such batch");
+
+  const caller = disclose(participant_id(caller_sk()));
+  const rec = batches.lookup(bid);
+  assert(caller == regulator || caller == rec.manufacturer, "Not authorized to recall this batch");
+
+  batches.insert(
+    bid,
+    BatchRecord { manufacturer: rec.manufacturer,
+                  expiry: rec.expiry,
+                  units_root: rec.units_root,
+                  metadata_hash: rec.metadata_hash,
+                  status: BatchStatus.RECALLED }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 5) verify — a pharmacist SCANS a unit and receives a proof that the batch was
+//    made by a registered manufacturer, imported through an authorized channel,
+//    and is not recalled, and that the unit belongs to the batch. Read-only: it
+//    does NOT consume the unit, so a pharmacist can check before a sale. The
+//    pharmacy's identity is not disclosed.
+// ---------------------------------------------------------------------------
+export circuit verify(batch_id: Bytes<32>,
+                      pharmacy_root: MerkleTreeDigest,
+                      unit_path: MerkleTreePath<32, Bytes<32>>
+                      ): [] {
+  require_scan_checks(batch_id, pharmacy_root, unit_path);
+}
+
+// ---------------------------------------------------------------------------
+// 6) dispense — the point-of-sale scan. Same checks as `verify`, then burns the
+//    unit's deterministic nullifier so a copied QR cannot be dispensed twice.
+// ---------------------------------------------------------------------------
+export circuit dispense(batch_id: Bytes<32>,
+                        pharmacy_root: MerkleTreeDigest,
+                        unit_path: MerkleTreePath<32, Bytes<32>>
+                        ): [] {
+  const rec = require_scan_checks(batch_id, pharmacy_root, unit_path);
+
+  // clone alarm: deterministic nullifier, set once
+  const uc = unit_commitment(unit_code());
+  const nullifier = unit_nullifier(uc);
+  assert(!dispensed.member(disclose(nullifier)), "Unit already dispensed");
+  dispensed.insert(disclose(nullifier));
+}
+
+// Shared scan checks: (a) caller is a registered pharmacy, (b) the batch exists,
+// was imported and is not recalled, (c) the unit is in the batch's unit tree.
+// Returns the batch record so `dispense` can reuse the resolved unit commitment.
+circuit require_scan_checks(batch_id: Bytes<32>,
+                            pharmacy_root: MerkleTreeDigest,
+                            unit_path: MerkleTreePath<32, Bytes<32>>
+                            ): BatchRecord {
+  // (a) pharmacy is registered (private membership proof)
+  const ph_id = participant_id(caller_sk());
+  const ph_leaf = party_leaf(ph_id);
+  const ph_path = pharmacy_path();
+  require_pharmacy(ph_leaf, ph_path, pharmacy_root);
+
+  // (b) batch exists, is imported, and is not recalled
+  const bid = disclose(batch_id);
+  assert(batches.member(bid), "Unknown batch");
+  const rec = batches.lookup(bid);
+  assert(rec.status == BatchStatus.ACTIVE, "Batch is recalled");
+  assert(imports.member(bid), "Batch was not imported through an authorized channel");
+  assert(kernel.blockTimeLessThan(rec.expiry), "Batch has expired");
+
+  // (c) the unit belongs to this batch's unit tree
+  const uc = unit_commitment(unit_code());
+  assert(unit_path.leaf == uc, "Unit code does not match the presented proof");
+  assert(merkleTreePathRoot<32, Bytes<32>>(unit_path) == rec.units_root, "Unit is not part of this batch");
+
+  return rec;
+}

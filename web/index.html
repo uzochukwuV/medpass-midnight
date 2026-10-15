@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MedPass — anti-counterfeit medicine passport</title>
+<style>
+  :root {
+    --ink: #10151c; --muted: #5b6773; --line: #e3e8ee; --bg: #f6f8fa;
+    --card: #ffffff; --ok: #0f7b3f; --okbg: #e7f6ec; --warn: #a15c00;
+    --warnbg: #fff3e0; --bad: #b32020; --badbg: #fdecec; --accent: #1f4fd8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { background: linear-gradient(135deg,#10233f,#1f4fd8); color: #fff;
+           padding: 28px 32px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .2px; }
+  header p { margin: 0; opacity: .85; font-size: 13px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 28px 0 10px; }
+  .grid { display: grid; gap: 16px; }
+  .cols { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 16px 18px; }
+  .card h3 { margin: 0 0 10px; font-size: 15px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0;
+         border-bottom: 1px dashed var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .k { color: var(--muted); }
+  .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+       word-break: break-all; text-align: right; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+          font-size: 12px; font-weight: 600; }
+  .pill.ok { background: var(--okbg); color: var(--ok); }
+  .pill.warn { background: var(--warnbg); color: var(--warn); }
+  .pill.bad { background: var(--badbg); color: var(--bad); }
+  .scan { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0;
+          border-bottom: 1px solid var(--line); }
+  .scan:last-child { border-bottom: 0; }
+  .scan .icon { font-size: 20px; line-height: 1; }
+  .scan .body { flex: 1; }
+  .scan .title { font-weight: 600; }
+  .scan .detail { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  ul { margin: 6px 0 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  .priv { background: var(--okbg); }
+  .pub { background: #eef3ff; }
+  .note { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MedPass — anti-counterfeit medicine passport</h1>
+  <p>Zero-knowledge batch provenance on Midnight. A pharmacist scans a unit and gets proof of manufacturer, authorized import and recall status — without exposing supplier contracts or pricing.</p>
+</header>
+<main>
+  <div id="app">Loading live circuit results…</div>
+</main>
+
+<script>
+const SHORT = (h) => h ? `${h.slice(0,10)}…${h.slice(-6)}` : '';
+const OUTCOME = {
+  AUTHENTIC:        { icon: '✅', cls: 'ok',   label: 'AUTHENTIC' },
+  RECALLED:         { icon: '⛔', cls: 'bad',  label: 'RECALLED' },
+  EXPIRED:          { icon: '⛔', cls: 'bad',  label: 'EXPIRED' },
+  CLONE:            { icon: '🚨', cls: 'bad',  label: 'CLONE SUSPECTED' },
+  NOT_IMPORTED:     { icon: '⛔', cls: 'bad',  label: 'UNAUTHORIZED CHANNEL' },
+  NOT_IN_BATCH:     { icon: '⛔', cls: 'bad',  label: 'NOT THIS BATCH' },
+  REVOKED:          { icon: '🚫', cls: 'bad',  label: 'PARTY REVOKED' },
+  NOT_A_PHARMACY:   { icon: '🚫', cls: 'bad',  label: 'NOT A PHARMACY' },
+  UNKNOWN:          { icon: '❓', cls: 'warn', label: 'UNKNOWN' },
+};
+
+function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+
+function row(k, v) { return `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
+
+function render(state) {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+
+  // --- Regulator / registries ---
+  const reg = el(`<section><h2>Regulator &amp; registries (on-chain roots)</h2>
+    <div class="card pub">
+      ${row('sealed regulator id', SHORT(state.regulator.id))}
+      ${row('manufacturers Merkle root', SHORT(state.registries.manufacturers[0]))}
+      ${row('importers Merkle root', SHORT(state.registries.importers[0]))}
+      ${row('pharmacies Merkle root', SHORT(state.registries.pharmacies[0]))}
+      <div class="note">Regulator enrolls parties at deploy. Membership is proven with a private Merkle path, so the contract never learns which member is acting.</div>
+    </div></section>`);
+  app.appendChild(reg);
+
+  // --- Manufacturer view: batches ---
+  const batchCards = state.batches.map((b) => {
+    const status = b.status === 'RECALLED'
+      ? '<span class="pill bad">RECALLED</span>'
+      : '<span class="pill ok">ACTIVE</span>';
+    const imp = b.imported
+      ? `<span class="pill ok">imported</span>`
+      : `<span class="pill warn">not imported</span>`;
+    return `<div class="card">
+      <h3>${b.id} &nbsp; ${status} &nbsp; ${imp}</h3>
+      ${row('manufacturer', SHORT(b.manufacturer))}
+      ${row('expiry', b.expiry)}
+      ${row('unit-tree root', SHORT(b.unitsRoot))}
+      ${row('metadata commitment', SHORT(b.metadataHash))}
+      ${b.termsCommitment ? row('supplier terms commitment', SHORT(b.termsCommitment)) : ''}
+      <div class="note">${b.termsCommitment
+        ? 'Only an opaque commitment to the supplier contract is stored — terms and pricing stay private.'
+        : 'No authorized import recorded for this batch.'}</div>
+    </div>`;
+  }).join('');
+  app.appendChild(el(`<section><h2>Manufacturer &amp; importer view — batches</h2>
+    <div class="grid cols">${batchCards}</div></section>`));
+
+  // --- Pharmacist view: scans ---
+  const scanCards = state.scans.map((s) => {
+    const o = OUTCOME[s.outcome] || OUTCOME.UNKNOWN;
+    const nf = s.nullifier ? `<div class="detail mono">nullifier ${SHORT(s.nullifier)}</div>` : '';
+    return `<div class="scan">
+      <div class="icon">${o.icon}</div>
+      <div class="body">
+        <div class="title"><span class="pill ${o.cls}">${o.label}</span>
+          &nbsp; ${s.pharmacy} → ${s.batchId} · unit ${s.unit}</div>
+        <div class="detail">${s.detail}</div>
+        ${nf}
+      </div>
+    </div>`;
+  }).join('');
+  app.appendChild(el(`<section><h2>Pharmacist view — scans &amp; point-of-sale</h2>
+    <div class="card">${scanCards}</div></section>`));
+
+  // --- Privacy panel ---
+  const pub = state.privacy.onChain.map((p) => `<li>${p}</li>`).join('');
+  const priv = state.privacy.private.map((p) => `<li>${p}</li>`).join('');
+  app.appendChild(el(`<section><h2>What is public vs private</h2>
+    <div class="grid cols">
+      <div class="card pub"><h3>On-chain (public)</h3><ul>${pub}</ul></div>
+      <div class="card priv"><h3>Never on-chain (private)</h3><ul>${priv}</ul></div>
+    </div>
+    <div class="note">The dispensed-unit set holds one-way nullifiers, so a verifier can detect a cloned QR without learning which pharmacy dispensed which unit.</div>
+  </section>`));
+}
+
+fetch('/api/demo').then((r) => r.json()).then(render).catch((e) => {
+  document.getElementById('app').textContent = 'Failed to load demo: ' + e;
+});
+</script>
+</body>
+</html>

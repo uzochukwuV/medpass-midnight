@@ -1,0 +1,35 @@
+{
+  "contractName": "medpass",
+  "network": "undeployed",
+  "contractAddress": "f5cef89afbd88f7a7ad40c832d6fff82fb297e45b4033009f8a7e28f0d25e61e",
+  "endpoints": {
+    "id": "undeployed",
+    "indexer": "http://127.0.0.1:8088/api/v4/graphql",
+    "indexerWS": "ws://127.0.0.1:8088/api/v4/graphql/ws",
+    "node": "http://127.0.0.1:9944",
+    "nodeWS": "ws://127.0.0.1:9944",
+    "proofServer": "http://127.0.0.1:6300"
+  },
+  "txids": {
+    "deploy": "007e52843df665631b9af41542ec1be73f38a1a861655a163f2b2aca08e91efee5",
+    "register:manufacturer": "004c914590287789e762102e89a43089a7694f17da5723891001a7a4ee5c8156db",
+    "register:importer": "00da85ee07e3af12319d86fef1801e3217a69847fe9c3bc53187882e8ac5f6a0b7",
+    "register:pharmacyA": "00a1a94fc1fc675c6dd7961e20b9e29d0f8b81d544293fb00c517f805096aecc14",
+    "register:pharmacyB": "0079c1cecd9ab0148406afcf7f262189499804e1fc3dd5a63b8fc0ed167c7a8929",
+    "create_batch": "0006bf33f22bd849e265b6456f608be58683ccace3397fe9bd8d92d906b5a9e013",
+    "record_import": "00c8f68476de53098a2547ce4d77792fcba8cb3f2660ae7e4dcfd8a78c0a012def",
+    "verify (scan)": "00ee4a06434f505c2e1bb25c8b648aacb7387ed4695bcf6b0112f3a2d06576b78b",
+    "dispense": "002d42298cbf90150f8fde7d1eff5cb137a442ae72a082f0ff9bdd0bcb9b00dbbd",
+    "recall_batch": "00f1eeed464e2c22d8f80840c134136a4e1421ae0ab880e89ad3d2b540dc951d72",
+    "revoke_party": "00e9d90c0c824a354f5ac84cbaa882cf19a364396fd58118fb83cc86938f4c392e"
+  },
+  "blockHeight": 172,
+  "batchId": "05743461c4ef0c5475f7e34b11d1ef6554e83f373ced0d93a3f77bcb330fd18c",
+  "units": [
+    "63f203a9d1ea156b9aaf555831f6dee8fab48db932fb9773744c3b252cf7d3e1",
+    "5b294726493527d9de4fe49f93f9d0740231bdd1a7e6cb53336d732d000c21a3",
+    "ae939f9bc072aba875e9eefdbabd2b12bdbf845eb13cc589d34dd5e7e977f5e8",
+    "804fe68a5b0e4605991dfac3ab8e7110adf719e06e2c92b26605691fb04e440b"
+  ],
+  "ranAt": "2026-10-15T12:33:20.657Z"
+}
