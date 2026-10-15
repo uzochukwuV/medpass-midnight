@@ -12,6 +12,7 @@
     "demo": "node --import tsx scripts/demo.ts",
     "web": "node --import tsx scripts/dev-server.ts",
     "wallet:new": "node --import tsx scripts/new-wallet.ts",
+    "preflight": "node --import tsx scripts/preflight.ts",
     "run:local": "node --import tsx scripts/run-lifecycle.ts undeployed",
     "run:preview": "node --import tsx scripts/run-lifecycle.ts preview",
     "run:preprod": "node --import tsx scripts/run-lifecycle.ts preprod"
