@@ -2,7 +2,7 @@
   "name": "@medpass/contract",
   "version": "0.1.0",
   "private": true,
-  "description": "MedPass — anti-counterfeit medicine passport on Midnight",
+  "description": "MedPass \u2014 anti-counterfeit medicine passport on Midnight",
   "type": "module",
   "scripts": {
     "build": "compactc src/medpass.compact src/managed/medpass",
@@ -11,6 +11,7 @@
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "demo": "node --import tsx scripts/demo.ts",
     "web": "node --import tsx scripts/dev-server.ts",
+    "wallet:new": "node --import tsx scripts/new-wallet.ts",
     "run:local": "node --import tsx scripts/run-lifecycle.ts undeployed",
     "run:preview": "node --import tsx scripts/run-lifecycle.ts preview",
     "run:preprod": "node --import tsx scripts/run-lifecycle.ts preprod"

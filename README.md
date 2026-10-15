@@ -152,13 +152,17 @@ The build produces **seven proving circuits**: `register_party`, `revoke_party`,
 `npm test` and `npm run demo` run entirely in-process. To exercise the contract
 against a live Midnight node — real proofs from the proof server, real
 transactions balanced with DUST and finalized on-chain — point the runner at a
-devnet:
+devnet or a public network.
 
 ```bash
-# start midnight-local-dev (node :9944, indexer :8088, proof server :6300)
-npm run run:local     # deploy + full lifecycle against the local devnet
-npm run run:preview   # same, against Midnight preview (set MEDPASS_WALLET_MNEMONIC)
-npm run run:preprod   # same, against Midnight preprod
+# 1. create a wallet and fund its unshielded address from the network's faucet
+npm run wallet:new -- preview      # or: preprod, undeployed
+#    -> prints the addresses + mnemonic, writes .secrets/preview-wallet.json
+
+# 2. deploy + run the full lifecycle (real proofs)
+npm run run:local      # local midnight-local-dev (node :9944, indexer :8088)
+npm run run:preview    # Midnight preview  (Midnight-hosted, no token)
+npm run run:preprod    # Midnight preprod  (Blockfrost-backed, needs a token)
 ```
 
 The runner deploys the contract, enrolls four parties, then drives
@@ -167,8 +171,28 @@ batch, revokes a pharmacy, and reads the ledger back through the indexer — eve
 step a finalized transaction. A record of the run (contract address, txIds,
 block heights, batch id) is written to `deployments/<network>.json`.
 
+#### Network endpoints (as of October 2026)
+
+| Network | Node / indexer | Token | Faucet |
+|---|---|---|---|
+| `undeployed` | `localhost:9944` / `localhost:8088` | none | local funding menu |
+| `preview` | `rpc/indexer.preview.midnight.network` | none | [preview faucet](https://midnight-tmnight-preview.nethermind.dev/) |
+| `preprod` | `*.midnight-preprod.blockfrost.io` | **Blockfrost `nightpreprod` project** | [preprod faucet](https://midnight-tmnight-preprod.nethermind.dev/) |
+
+Midnight shut down its own preprod node and indexer on 2026-10-09; preprod is now
+served by Blockfrost, so every preprod URL carries a `?project_id=` token. Create
+a Midnight Preprod project at [blockfrost.io](https://blockfrost.io) and export it:
+
+```bash
+export BLOCKFROST_PROJECT_ID=nightpreprod...   # required for preprod
+```
+
+The proof server is always local (`http://localhost:6300`) on every network,
+because it handles private witness data.
+
 Configuration is env-overridable: `MIDNIGHT_NETWORK`, `MIDNIGHT_INDEXER_URL`,
-`MIDNIGHT_NODE_URL`, `MIDNIGHT_PROOF_SERVER`, `MEDPASS_WALLET_MNEMONIC`,
+`MIDNIGHT_INDEXER_WS_URL`, `MIDNIGHT_NODE_URL`, `MIDNIGHT_NODE_WS_URL`,
+`MIDNIGHT_PROOF_SERVER`, `MEDPASS_WALLET_MNEMONIC`, `BLOCKFROST_PROJECT_ID`,
 `MIDNIGHT_PRIVATE_STATE_PASSWORD`.
 
 ### Docker
@@ -227,7 +251,8 @@ scripts/demo-core.ts           shared lifecycle used by CLI + web
 scripts/demo.ts                CLI walkthrough (npm run demo)
 scripts/dev-server.ts          tiny static + /api/demo server (npm run web)
 scripts/run-lifecycle.ts       real-network deploy + lifecycle (npm run run:local)
-scripts/shared/network.ts      endpoint config (devnet / preview / preprod)
+scripts/new-wallet.ts          generate/import a wallet (npm run wallet:new)
+scripts/shared/network.ts      endpoint config (devnet / preview / preprod + Blockfrost)
 scripts/shared/wallet.ts       wallet + midnight-js providers (real proving)
 scripts/shared/medpass.ts      compiled-contract wrapper + witness context
 web/index.html                 three-view demo UI

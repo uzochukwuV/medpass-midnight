@@ -6,3 +6,4 @@ src/managed/
 .env
 .midnight-state/
 logs/
+.secrets/
