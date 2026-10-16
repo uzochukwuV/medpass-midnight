@@ -47,6 +47,18 @@ const log = (...a: unknown[]) => console.log(...a);
 const rule = () => log('─'.repeat(72));
 const firstLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).split('\n')[0];
 
+// Endpoint URLs may carry API credentials in query params (e.g. Blockfrost's
+// project_id). Never persist or print those.
+const redact = (url: string) =>
+  url.replace(/([?&](?:project_id|token|apikey|api_key)=)[^&]*/gi, '$1REDACTED');
+const redactedConfig = (c: ReturnType<typeof resolveNetworkConfig>) => ({
+  ...c,
+  indexer: redact(c.indexer),
+  indexerWS: redact(c.indexerWS),
+  node: redact(c.node),
+  nodeWS: redact(c.nodeWS),
+});
+
 function txLine(label: string, r: any) {
   const pub = r?.public ?? {};
   log(`  ${label.padEnd(18)} txId=${pub.txId ?? '(n/a)'}`);
@@ -62,8 +74,8 @@ async function main() {
   log('MedPass — anti-counterfeit medicine passport');
   log(`Live run against Midnight ${network} with REAL zk proofs`);
   rule();
-  log(`indexer:      ${config.indexer}`);
-  log(`node:         ${config.node}`);
+  log(`indexer:      ${redact(config.indexer)}`);
+  log(`node:         ${redact(config.node)}`);
   log(`proof server: ${config.proofServer}`);
   log();
 
@@ -230,7 +242,7 @@ async function main() {
       contractName: 'medpass',
       network,
       contractAddress,
-      endpoints: config,
+      endpoints: redactedConfig(config),
       txids,
       blockHeight: deployResult.deployTxData.public.blockHeight,
       batchId: toHex(BATCH),
