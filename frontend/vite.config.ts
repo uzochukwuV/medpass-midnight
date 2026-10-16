@@ -60,6 +60,24 @@ export default defineConfig({
     zkArtifacts(),
   ],
   resolve: {
+    // The compiled contract (src/managed) and tests/helpers/simulator.ts live
+    // outside the frontend root and import the Midnight runtime by bare name.
+    // Without dedupe those resolve against the repo-root node_modules, so the
+    // build breaks whenever the root install is absent. Pin them to the
+    // frontend's own copies instead.
+    dedupe: [
+      '@midnight-ntwrk/compact-runtime',
+      '@midnight-ntwrk/onchain-runtime-v3',
+      '@midnight-ntwrk/compact-js',
+      '@midnight-ntwrk/midnight-js-contracts',
+      '@midnight-ntwrk/midnight-js-fetch-zk-config-provider',
+      '@midnight-ntwrk/midnight-js-http-client-proof-provider',
+      '@midnight-ntwrk/midnight-js-indexer-public-data-provider',
+      '@midnight-ntwrk/midnight-js-level-private-state-provider',
+      '@midnight-ntwrk/midnight-js-network-id',
+      '@midnight-ntwrk/dapp-connector-api',
+      '@midnight-ntwrk/midnight-js-dapp-connector-proof-provider',
+    ],
     alias: {
       '@medpass/contract': resolve(managed, 'contract/index.js'),
       '@medpass/simulator': resolve(repoRoot, 'tests/helpers/simulator.ts'),

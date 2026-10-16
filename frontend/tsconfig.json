@@ -16,7 +16,9 @@
     "baseUrl": ".",
     "paths": {
       "@medpass/contract": ["../src/managed/medpass/contract/index.d.ts"],
-      "@medpass/simulator": ["../tests/helpers/simulator.ts"]
+      "@medpass/simulator": ["../tests/helpers/simulator.ts"],
+      "@midnight-ntwrk/compact-runtime": ["./node_modules/@midnight-ntwrk/compact-runtime"],
+      "@midnight-ntwrk/onchain-runtime-v3": ["./node_modules/@midnight-ntwrk/onchain-runtime-v3"]
     }
   },
   "include": ["src"]
