@@ -144,6 +144,27 @@ npm run demo         # narrated end-to-end walkthrough in the terminal
 npm run web          # three-view demo UI at http://localhost:12000
 ```
 
+### React demo app (browser)
+
+`frontend/` is a single-page React app that runs the **real contract** in the
+browser — the same compiled circuits the tests use, executed through
+`@midnight-ntwrk/compact-runtime` with no wallet, node or proof server. Four
+role screens (regulator, manufacturer, importer, pharmacy) drive the full
+lifecycle; a pharmacy scan returns an *authentic*, *possible counterfeit* or
+*recalled* verdict.
+
+```bash
+cd frontend
+npm install
+npm run dev          # dev server at http://localhost:12001
+npm run build        # production bundle -> frontend/dist
+npm run typecheck
+```
+
+The app also has a **Live** mode that connects to an injected Midnight wallet
+(`window.midnight`) and deploys/reads the contract through real providers; the
+default **Demo** mode needs no network.
+
 The build produces **seven proving circuits**: `register_party`, `revoke_party`,
 `create_batch`, `record_import`, `recall_batch`, `verify`, `dispense`.
 
