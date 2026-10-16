@@ -171,6 +171,38 @@ batch, revokes a pharmacy, and reads the ledger back through the indexer — eve
 step a finalized transaction. A record of the run (contract address, txIds,
 block heights, batch id) is written to `deployments/<network>.json`.
 
+#### Verified preprod deployment (2026-10-16)
+
+A full lifecycle was run against Midnight **preprod** with real proofs. Every
+step below is a finalized on-chain transaction; the contract state was read back
+through the indexer afterwards (`batch_count=1`, `party_count=4`, `batches=1`,
+`imports=1`, `dispensed=1`, `revoked=1`).
+
+- **Contract address:** `a8d42dcd354f0a9cb5dfbfc0f38836b907e31f2c8e4533b9f3914e9e84d4bdc3`
+- **Deploy block:** `2998970` (recorded at run time; the deployment itself lands a few blocks later)
+- **Batch id:** `05743461c4ef0c5475f7e34b11d1ef6554e83f373ced0d93a3f77bcb330fd18c`
+- **Run at:** `2026-10-16T00:53:48Z`
+
+| Step | Transaction id |
+|---|---|
+| `deploy` | `00f42c63d48d8b2e9a47eb978af39a36fcd1dfb337bb372d9b2c763a4ea3b146f3` |
+| `register:manufacturer` | `00ef5da768e8aa77cd7f44771bd0b264c58f4b1b8777567e67fe75561ce7a4edcf` |
+| `register:importer` | `00f9a58b8e3f14e15b021911d37f4839526b663159e224dc804b832188335f3743` |
+| `register:pharmacyA` | `00598fd701d5b0f5f42fa9c78352b9b3023b0712ff3a44180260d341820760262c` |
+| `register:pharmacyB` | `00979ddbf0bb17393a2e821bf3b018ff0212196745ad597f9cbb6f778e70eb1b16` |
+| `create_batch` | `00db574819965fc865db38b3ac40c90c52c80602b68f2dda656ec2338cfd6cf163` |
+| `record_import` | `000e004cb535f752632e2fa716b88ca57142488051deb1c555f4269a9297a29b25` |
+| `verify` (scan) | `00e8d2e2a25052cb8b61a70d38c616c3c55ddc7895ddbdd259e9d51569672eae33` |
+| `dispense` | `008a0c1b16b0e9e808ae65ffac09c19bce085a6e560a2a0fa1ee6942fda9b89db7` |
+| `recall_batch` | `00e8870b4fa78631a43392b830c60ab11ea87867fe545a34547b46ce9eb5f1df17` |
+| `revoke_party` | `009099333581cbc2e56961a85c5f88003dc0435309170383183d561aae25d2f50b` |
+
+The four units enrolled in the batch were
+`63f203a9d1ea156b9aaf555831f6dee8fab48db932fb9773744c3b252cf7d3e1`,
+`5b294726493527d9de4fe49f93f9d0740231bdd1a7e6cb53336d732d000c21a3`,
+`ae939f9bc072aba875e9eefdbabd2b12bdbf845eb13cc589d34dd5e7e977f5e8`,
+`804fe68a5b0e4605991dfac3ab8e7110adf719e06e2c92b26605691fb04e440b`.
+
 #### Network endpoints (as of October 2026)
 
 | Network | Node / indexer | Token | Faucet |
