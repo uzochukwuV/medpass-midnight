@@ -4,8 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "ensure-contract": "node scripts/ensure-contract.mjs",
+    "predev": "node scripts/ensure-contract.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/ensure-contract.mjs",
     "build": "vite build",
+    "pretypecheck": "node scripts/ensure-contract.mjs",
     "preview": "vite preview --port 12001",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

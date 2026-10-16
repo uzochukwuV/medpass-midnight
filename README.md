@@ -161,6 +161,12 @@ npm run build        # production bundle -> frontend/dist
 npm run typecheck
 ```
 
+The app bundles the **compiled** contract from `src/managed/`, which `compactc`
+generates and git does not track. `dev`, `build` and `typecheck` compile it
+automatically on first run (a no-op afterwards), so the compiler must be on your
+`PATH` — install it per the Requirements section above. If it is missing, the
+script stops with an explanatory message rather than a cryptic Rollup error.
+
 The app also has a **Live** mode that connects to an injected Midnight wallet
 (`window.midnight`) and deploys/reads the contract through real providers; the
 default **Demo** mode needs no network.
