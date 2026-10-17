@@ -155,12 +155,13 @@ route changes. That is the property that makes the demo work.
 /                          Landing (marketing, no workspace)
 /app                       Redirects to /app/overview
 /app/overview              Contract state, network, activity, identity
-/app/manufacturer          Manufacturer home: registration + batches
+/app/register              Enrolment: every participant asks to be enrolled
+/app/manufacturer          Manufacturer home: status + batches
 /app/manufacturer/batches/:batchId   Batch detail, unit sheet, QR export, recall
-/app/importer              Importer home: registration + pending/imported
+/app/importer              Importer home: status + pending/imported
 /app/pharmacy              Scan a unit (the counter screen)
 /app/pharmacy/history      Session scan history
-/app/regulator             Party registry + enrolment/revocation
+/app/regulator             Enrolment desk: pending queue, registry, revoke
 /app/regulator/parties/:partyId      Party detail
 ```
 
@@ -168,15 +169,91 @@ route changes. That is the property that makes the demo work.
 editorial landing page; the workspace lives under `/app`. The nav CTA "Open the
 workspace" carries them across.
 
-### 3.3 Flow order made explicit
+### 3.3 Enrolment is two-sided: request, then approve
+
+**Every participant registers, not just the manufacturer.** In the contract,
+`register_party(role, party_id)` is regulator-only and covers all three
+non-regulator roles (`PartyRole` is `MANUFACTURER | IMPORTER | PHARMACY`; the
+regulator is sealed in the constructor, not enrolled). So the correct UX is a
+two-sided flow, and my first draft collapsed it into "registration panels" that
+implied self-enrolment. Correcting that here.
+
+**Side A — the participant asks.** A single shared page at `/app/register`,
+reachable from every role page. It shows:
+
+- the acting identity: `participant_id(appSecret)`, and a note that this is what
+  gets enrolled;
+- a role selector, defaulted from the current page;
+- the enrolment status for that identity, derived by scanning the registry
+  (see §3.4);
+- **Request enrolment** — a *pending* local record plus a copyable
+  "enrolment request" string the participant sends to the regulator out of band
+  (there is no on-chain inbox, and inventing one would be a contract change);
+- **Restore access** when the identity is revoked — this calls `register_party`
+  again, which the contract explicitly supports (re-enrolling a revoked party
+  removes it from the `revoked` set).
+
+**Side B — the regulator approves.** The regulator page becomes an enrolment
+desk:
+
+- **Pending requests** queue: for each, the requested role, the party id, and an
+  **Enrol** action that calls `register_party`.
+- **Registry** table grouped by role, with revoke / restore.
+- A hint that a participant must be enrolled *before* it can act, so the
+  dependency is visible on the regulator's side too.
+
+Why a local pending queue rather than an on-chain one: a request has nowhere to
+live on-chain — `register_party` is the only enrolment entry point and it is
+regulator-only. Adding a request registry would change the contract and its
+tests, which is out of scope for a presentation-layer pass. So the request is
+local state (persisted like the identity is), and the copyable string is the
+real handoff. I will label it plainly as a demo affordance rather than imply the
+chain mediates it.
+
+### 3.4 "Am I enrolled?" without reading the registry
+
+The registries are `MerkleTree<32, Bytes<32>>`. A Merkle tree proves membership;
+it does not enumerate. Two consequences:
+
+- **In demo mode**, `DemoEngine.ledgerView()` lists parties from the known
+  `PERSONAS` set and checks each leaf against the `revoked` set. That is a demo
+  convenience — it works only because the cast is known.
+- **In live mode**, `live.ts` returns empty `manufacturers` / `importers` /
+  `pharmacies` arrays, with a comment saying membership is proved, never listed.
+  That is honest but leaves the UI unable to answer "am I enrolled?".
+
+The plan fixes the live gap **without touching the contract**, by adding a
+read-only check to `lib/live.ts`:
+
+```
+async isEnrolled(role: Exclude<Role, 'regulator'>): Promise<boolean>
+```
+
+It derives the caller's own leaf via `partyLeaf(participantId(appSecret))`, asks
+the indexer for a membership path for that leaf, and returns whether one exists
+(and whether the leaf is in `revoked`). This is self-enrolment status only — it
+cannot enumerate anyone else. That is exactly the right shape: a participant may
+learn *their own* status, and no one learns the registry contents.
+
+Party tables in the UI therefore show:
+
+| Mode | Party table shows |
+|---|---|
+| Demo | The full known cast with active/revoked status |
+| Live | Only the connected identity's own status, plus a "registry is not enumerable by design" note |
+
+This is a behaviour difference between the two modes, so the UI must state it
+rather than look broken in live mode.
+
+### 3.5 Flow order made explicit
 
 The nav lists roles in dependency order — Regulator, Manufacturer, Importer,
 Pharmacy — with a thin step indicator. When a prerequisite is missing, the page
 says so and links to it rather than silently failing. Concretely:
 
 - Manufacturer batch creation requires the manufacturer to be enrolled →
-  if not enrolled, the page shows a "Not enrolled" panel with a link to the
-  regulator's enrolment page.
+  if not enrolled, the page shows a "Not enrolled" panel with a link to
+  `/app/register` (and from there the regulator's desk).
 - Importer shows "no batches awaiting import" when the manufacturer has not
   created any.
 - Pharmacy scan against a non-imported batch returns NOT_IMPORTED and the
@@ -200,6 +277,7 @@ src/
   pages/
     Landing.tsx                 # hero, cream product stage, how-it-works
     Overview.tsx                # from App's Session + Identity sections
+    Register.tsx                # enrolment request (shared by all roles)
     manufacturer/ManufacturerHome.tsx
     manufacturer/BatchDetail.tsx
     importer/ImporterHome.tsx
@@ -264,9 +342,11 @@ The operating console, minimal chrome.
 This is the page the brief calls out, so it carries real weight.
 
 - **Registration panel.** The manufacturer's participant id, enrolment status
-  (Active / Revoked), and — if not enrolled — a prominent Ink-filled notice
-  with a link to the regulator page. Enrolment itself is the regulator's action;
-  this page states the status rather than pretending to offer it.
+  (Active / Revoked / Not enrolled), and the route to fix it: a link to
+  `/app/register` when not enrolled, and **Restore access** when revoked
+  (re-enrolment, which the contract supports). Enrolment is the regulator's
+  action, so this page states status and offers the request path rather than
+  pretending to enrol directly.
 - **Create a batch.** Batch id, expiry days, unit codes textarea, metadata
   label. Same fields as today, retoned. The privacy note stays.
 - **Your batches.** Table: id, units, expiry, root, status pill, imported pill,
@@ -292,6 +372,20 @@ This is the page the brief calls out, so it carries real weight.
 - **Imported** — batches with the terms commitment shown as a hash only.
 - Terms textarea, retoned.
 
+### 5.5b `/app/register` — enrolment request (shared)
+
+Reachable from every role page and from the nav. One page, three parts:
+
+- **Identity** — the acting `participant_id(appSecret)`, copyable, with the
+  note that this is what the regulator enrols.
+- **Role** — selector defaulted from where the user came from.
+- **Status and action** — Not enrolled → *Request enrolment* (writes the local
+  pending record, shows the copyable request string); Revoked → *Restore
+  access*; Active → a confirmation, with no action offered.
+
+The page states in one line that approval happens on the regulator's page, so
+the request/approve split is never a mystery.
+
 ### 5.6 `/app/pharmacy` — the counter screen
 
 The highest-traffic page, so it gets the most restraint.
@@ -310,7 +404,11 @@ Session scan list, with the clone alarms visually separated.
 
 ### 5.8 `/app/regulator`
 
-- Registration/enrolment form: role + party id.
+- **Pending requests** queue (from `/app/register`), each with an **Enrol**
+  action calling `register_party`. Empty state explains that participants
+  request enrolment from their own page.
+- **Enrolment form** — the direct path: role + party id, for when the regulator
+  has the id out of band.
 - **Party registry** table grouped by role: label, participant id, status,
   revoke / restore.
 - Revoked count stat.
@@ -320,10 +418,12 @@ Session scan list, with the clone alarms visually separated.
 ### 5.9 Enrolment gating
 
 `RequireRole` wraps the manufacturer/importer/pharmacy routes. In demo mode it
-checks the persona's revoked flag against the ledger; in live mode it checks the
-connected identity's participant id. Unenrolled renders an `EmptyState` with the
-reason and a link to the regulator page. This replaces today's silent
-"transaction failed" path with an explanation before the user acts.
+checks the persona's leaf against the ledger's `revoked` set; in live mode it
+uses the `isEnrolled` self-check from §3.4 (which also reports revoked). A party
+that is not enrolled or is revoked renders an `EmptyState` with the reason and a
+link to `/app/register` — where "Restore access" is the action for a revoked
+party. This replaces today's silent "transaction failed" path with an
+explanation before the user acts.
 
 ### 5.10 Verdict card (shared)
 
@@ -416,7 +516,8 @@ separate commit.
 |---|---|---|
 | **A. Tokens & primitives** | Replace `styles.css` with `tokens.css` + `base.css` + `components.css`. Retone `ui.tsx`, extract `StageMeter.tsx`. No structure change. | Build passes; every existing screen renders on the light theme; contrast spot-check |
 | **B. Router & shell** | Add `react-router-dom`. `AppShell`, `NavBar`, `PageHeader`, `lib/routes.ts`. Move landing to `/`, workspace to `/app/overview`. | All routes reachable; deep-link reload works; provider state survives navigation |
-| **C. Role pages** | Split `ManufacturerScreen` → home + batch detail; add importer, pharmacy, regulator pages; `RequireRole` gating; shared `BatchTable`/`PartyTable`/`EmptyState`. | Each role flow driven end to end in the browser |
+| **C. Role pages** | Split `ManufacturerScreen` → home + batch detail; add importer, pharmacy, regulator pages; shared `BatchTable`/`PartyTable`/`EmptyState`. | Each role flow driven end to end in the browser |
+| **C2. Enrolment flow** | `Register.tsx` request page, pending queue on the regulator desk, `isEnrolled` added to `lib/live.ts`, enrolment-status panel on each role home, `RequireRole` gating. | Request → approve → act, for manufacturer, importer and pharmacy; revoke → restore |
 | **D. Verdict card** | Retone `ScanVerdict` into `VerdictCard` with the evidence checklist and severity mapping. | AUTHENTIC, CLONE, RECALLED, NOT_IMPORTED, NOT_A_BATCH all rendered and checked |
 | **E. QR sheet** | Add `qrcode`, batch-detail export, printable grid. | Generated sheet scans back to the same code |
 | **F. Polish** | Edge washes, focus states, reduced-motion, empty states, README note on font substitutes. | Keyboard-only pass; `tsc` + build + tests green |
@@ -428,8 +529,10 @@ is mostly mechanical once the shell exists; D–F are contained.
 
 - No new accent colour, no box-shadows, no serif in UI chrome, no 24px button
   radii. Those are the four rules the system states most plainly.
-- No change to the contract, the circuits, or `lib/live.ts` behaviour. This is a
-  presentation-layer change; the wiring from the previous commit stays.
+- No change to the contract, the circuits, or `lib/live.ts` **transaction**
+  behaviour. This is a presentation-layer change; the wiring from the previous
+  commit stays. The one addition to `live.ts` is the read-only `isEnrolled`
+  check (§3.4), which calls no circuit and submits nothing.
 
 ---
 
@@ -452,3 +555,14 @@ is mostly mechanical once the shell exists; D–F are contained.
    workspace moves to `/app`. If the app should open straight into the
    workspace, I will make `/` redirect to `/app/pharmacy` and keep the landing at
    `/about`.
+5. **Enrolment request handoff.** There is no on-chain inbox, so a request has to
+   be local state plus a copyable string the participant sends to the regulator
+   (§3.3). I am not willing to invent an on-chain request registry — it would
+   change the contract and its tests. Confirm the local-pending-queue approach,
+   or tell me to drop the request half entirely and keep enrolment as a single
+   regulator-side form where the regulator types the party id.
+6. **Live-mode party list.** Live mode cannot enumerate the registries, so the
+   party table shows only the connected identity's own status plus an
+   explanation (§3.4). Demo mode shows the full cast. Acceptable, or would you
+   rather the live party table be hidden entirely to avoid the modes looking
+   different?
