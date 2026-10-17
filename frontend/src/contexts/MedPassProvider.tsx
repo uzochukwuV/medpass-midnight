@@ -28,6 +28,19 @@ import type {
   WalletState,
 } from '../lib/types';
 
+interface EnrolmentStatus {
+  enrolled: boolean;
+  revoked: boolean;
+}
+
+export interface PendingRequest {
+  id: string;
+  role: Exclude<Role, 'regulator'>;
+  partyId: string;
+  label: string;
+  at: number;
+}
+
 interface Ctx {
   ready: boolean;
   mode: RunMode;
@@ -50,6 +63,20 @@ interface Ctx {
   refresh: () => void;
   batches: BatchView[];
 
+  /** The acting party's enrolment for a role. Demo reads the ledger; live self-checks. */
+  enrolment: (role: Exclude<Role, 'regulator'>) => EnrolmentStatus;
+  /**
+   * The party id that acts for a role. Demo acts as a fixed persona, so the
+   * persona's id is the one the regulator enrols; live uses this device's id.
+   * Anything that names a party for enrolment must use this, not `identity`.
+   */
+  actingPartyId: (role: Exclude<Role, 'regulator'>) => string;
+  refreshEnrolment: () => void;
+  /** Enrolment requests raised from /app/register, awaiting the regulator. */
+  pendingRequests: PendingRequest[];
+  requestEnrolment: (role: Exclude<Role, 'regulator'>, label: string) => void;
+  dismissRequest: (id: string) => void;
+
   busy: string | null;
   stage: TxStage;
   activity: Activity[];
@@ -59,6 +86,8 @@ interface Ctx {
   setDemoPharmacy: (id: string) => void;
 
   lastScan: ScanResult | null;
+  /** Every scan this browser has run, newest first. */
+  scans: ScanResult[];
 
   // actions
   register: (role: Role, partyId?: string) => Promise<void>;
@@ -87,6 +116,28 @@ const nextId = () => `a${++idSeq}`;
 
 const IDLE_STAGE: TxStage = 'idle';
 
+/** Persisted so a refresh does not lose the transaction log or the request queue. */
+function loadStored<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage full or blocked — the session still works, it just does not persist */
+  }
+}
+
+const ACTIVITY_KEY = 'medpass.activity.v1';
+const REQUESTS_KEY = 'medpass.enrolment-requests.v1';
+const SCANS_KEY = 'medpass.scans.v1';
+
 export function useMedPassState(): Ctx {
   const [ready, setReady] = useState(false);
   const [mode, setMode] = useState<RunMode>('demo');
@@ -98,10 +149,16 @@ export function useMedPassState(): Ctx {
   const [ledger, setLedger] = useState<LedgerView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [stage, setStage] = useState<TxStage>(IDLE_STAGE);
-  const [activity, setActivity] = useState<Activity[]>([]);
+  const [activity, setActivity] = useState<Activity[]>(() => loadStored<Activity[]>(ACTIVITY_KEY, []));
   const [demoPharmacy, setDemoPharmacy] = useState('citycare');
   const [lastScan, setLastScan] = useState<ScanResult | null>(null);
+  const [scans, setScans] = useState<ScanResult[]>(() => loadStored<ScanResult[]>(SCANS_KEY, []));
   const [contractAddress, setContractAddress] = useState(DEPLOYED_ADDRESS);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>(() =>
+    loadStored<PendingRequest[]>(REQUESTS_KEY, []),
+  );
+  const [liveEnrolment, setLiveEnrolment] = useState<Record<string, EnrolmentStatus>>({});
+  const [enrolmentTick, setEnrolmentTick] = useState(0);
 
   const engineRef = useRef<DemoEngine | null>(null);
   const liveRef = useRef<LiveSession | null>(null);
@@ -110,6 +167,10 @@ export function useMedPassState(): Ctx {
   const log = useCallback((kind: ActivityKind, title: string, detail?: string, txId?: string) => {
     setActivity((prev) => [{ id: nextId(), at: Date.now(), kind, title, detail, txId }, ...prev].slice(0, 60));
   }, []);
+
+  useEffect(() => store(ACTIVITY_KEY, activity), [activity]);
+  useEffect(() => store(REQUESTS_KEY, pendingRequests), [pendingRequests]);
+  useEffect(() => store(SCANS_KEY, scans), [scans]);
 
   // Boot: create the demo engine and detect wallets.
   useEffect(() => {
@@ -167,6 +228,83 @@ export function useMedPassState(): Ctx {
     void readBalances(api).then(setBalances).catch(() => undefined);
   }, []);
 
+  /**
+   * The acting party's enrolment for a role.
+   *
+   * Demo: the ledger knows the whole cast, so read the persona's revoked flag.
+   * Live: the registry is a Merkle tree and cannot be enumerated, so ask the
+   * session for a self-check. Both are the same question from the UI's side.
+   */
+  const enrolment = useCallback(
+    (role: Exclude<Role, 'regulator'>): EnrolmentStatus => {
+      if (mode === 'demo') {
+        const actorId = demoActorFor(role, demoPharmacy);
+        const rows =
+          role === 'manufacturer'
+            ? ledger?.manufacturers
+            : role === 'importer'
+              ? ledger?.importers
+              : ledger?.pharmacies;
+        const party = rows?.find((p) => p.id === actorId);
+        return { enrolled: !!party, revoked: !!party?.revoked };
+      }
+      return liveEnrolment[role] ?? { enrolled: false, revoked: false };
+    },
+    // enrolmentTick is a dependency so a refresh re-reads live status
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, demoPharmacy, ledger, liveEnrolment, enrolmentTick],
+  );
+
+  const refreshEnrolment = useCallback(() => setEnrolmentTick((t) => t + 1), []);
+
+  const actingPartyId = useCallback(
+    (role: Exclude<Role, 'regulator'>): string => {
+      if (mode !== 'demo') return identity.participantId;
+      const actorId = demoActorFor(role, demoPharmacy);
+      return PERSONAS[actorId]?.participantId ?? identity.participantId;
+    },
+    [mode, demoPharmacy, identity.participantId],
+  );
+
+  // Live mode: poll the self-check when connected. This calls no circuit.
+  useEffect(() => {
+    if (mode !== 'live' || !wallet.connected) return;
+    let cancelled = false;
+    const roles: Array<Exclude<Role, 'regulator'>> = ['manufacturer', 'importer', 'pharmacy'];
+    void (async () => {
+      const session = liveRef.current;
+      if (!session) return;
+      const next: Record<string, EnrolmentStatus> = {};
+      for (const r of roles) {
+        try {
+          next[r] = await session.enrollmentStatus(r);
+        } catch {
+          next[r] = { enrolled: false, revoked: false };
+        }
+      }
+      if (!cancelled) setLiveEnrolment(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, wallet.connected, enrolmentTick]);
+
+  const requestEnrolment = useCallback(
+    (role: Exclude<Role, 'regulator'>, label: string) => {
+      const partyId = actingPartyId(role);
+      setPendingRequests((prev) => {
+        if (prev.some((r) => r.partyId === partyId && r.role === role)) return prev;
+        return [{ id: nextId(), role, partyId, label, at: Date.now() }, ...prev];
+      });
+      log('info', `Enrolment requested — ${role}`, 'Waiting for the regulator to approve.');
+    },
+    [actingPartyId, log],
+  );
+
+  const dismissRequest = useCallback((id: string) => {
+    setPendingRequests((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
   const run = useCallback(
     async (label: string, fn: () => Promise<string | void>): Promise<void> => {
       setBusy(label);
@@ -177,6 +315,7 @@ export function useMedPassState(): Ctx {
         setStage('finalized');
         log('success', label, `${Date.now() - started} ms`, typeof txId === 'string' ? txId : undefined);
         refresh();
+        refreshEnrolment();
         refreshBalances();
       } catch (e) {
         setStage('failed');
@@ -186,7 +325,7 @@ export function useMedPassState(): Ctx {
         setTimeout(() => setStage(IDLE_STAGE), 1500);
       }
     },
-    [log, refresh, refreshBalances, mode],
+    [log, refresh, refreshEnrolment, refreshBalances, mode],
   );
 
   const connect = useCallback(
@@ -237,29 +376,21 @@ export function useMedPassState(): Ctx {
     return session;
   }, [contractAddress, identity]);
 
-  const demoActor = useCallback(
-    (role: Role): string => {
-      if (role === 'regulator') return 'regulator';
-      if (role === 'manufacturer') return 'acme';
-      if (role === 'importer') return 'globalmed';
-      return demoPharmacy;
-    },
-    [demoPharmacy],
-  );
-
   const register = useCallback(
     (role: Role, partyId?: string) =>
       run(`Register ${role}`, async () => {
         if (mode === 'demo') {
-          const id = partyId ?? demoActor(role);
-          engineRef.current!.register(id);
+          // The simulator needs a persona secret, so resolve whatever id we were
+          // handed — a persona id, a participant id from a request, or nothing —
+          // back to the persona that acts for this role.
+          engineRef.current!.register(demoPersonaFor(role, partyId, demoPharmacy));
           return undefined;
         }
         const session = await ensureLive();
         if (role === 'regulator') throw new Error('The regulator is sealed in the constructor.');
         return session.register(role, partyId ?? identity.participantId);
       }),
-    [mode, run, demoActor, ensureLive, identity.participantId],
+    [mode, run, demoPharmacy, ensureLive, identity.participantId],
   );
 
   const revoke = useCallback(
@@ -341,6 +472,7 @@ export function useMedPassState(): Ctx {
               ? await (await ensureLive()).dispense(batchId, unitCode)
               : await (await ensureLive()).verify(batchId, unitCode);
         setLastScan(result);
+        setScans((prev) => [result, ...prev].slice(0, 40));
         setStage('finalized');
         const good = result.outcome === 'AUTHENTIC';
         log(good ? 'success' : 'error', `${unitCode}: ${result.outcome}`, result.detail, result.nullifier);
@@ -406,6 +538,12 @@ export function useMedPassState(): Ctx {
     ledger,
     refresh,
     batches,
+    enrolment,
+    actingPartyId,
+    refreshEnrolment,
+    pendingRequests,
+    requestEnrolment,
+    dismissRequest,
     busy,
     stage,
     activity,
@@ -413,6 +551,7 @@ export function useMedPassState(): Ctx {
     demoPharmacy,
     setDemoPharmacy,
     lastScan,
+    scans,
     register,
     revoke,
     reRegister,
@@ -429,4 +568,27 @@ export function useMedPassState(): Ctx {
 
 function labelFor(id: string): string {
   return PERSONAS[id]?.label ?? id.slice(0, 8);
+}
+
+/** The demo persona that acts for a role. Demo mode is the only place a
+ *  role-to-actor mapping exists; live mode uses the app identity. */
+export function demoActorFor(role: Role, demoPharmacy: string): string {
+  if (role === 'regulator') return 'regulator';
+  if (role === 'manufacturer') return 'acme';
+  if (role === 'importer') return 'globalmed';
+  return demoPharmacy;
+}
+
+/**
+ * Resolve an enrolment target back to a persona the demo simulator can sign as.
+ * The caller may hand us a persona id, a participant id from a request string,
+ * or nothing at all; all three must land on a real persona.
+ */
+export function demoPersonaFor(role: Role, partyId: string | undefined, demoPharmacy: string): string {
+  if (partyId) {
+    if (PERSONAS[partyId]) return partyId;
+    const match = Object.values(PERSONAS).find((p) => p.participantId === partyId);
+    if (match) return match.id;
+  }
+  return demoActorFor(role, demoPharmacy);
 }

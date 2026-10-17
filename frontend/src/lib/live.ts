@@ -52,6 +52,8 @@ export interface LiveSession {
   verify(batchId: string, unitCode: string): Promise<ScanResult>;
   dispense(batchId: string, unitCode: string): Promise<ScanResult>;
   readLedger(): Promise<LedgerView>;
+  /** Self-check: is this session's own leaf in `role`'s registry, and revoked? */
+  enrollmentStatus(role: Exclude<Role, 'regulator'>): Promise<{ enrolled: boolean; revoked: boolean }>;
 }
 
 const ROLE_ENUM: Record<Exclude<Role, 'regulator'>, PartyRole> = {
@@ -271,6 +273,20 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
         revoked,
       };
     },
+
+    // A party may learn its OWN enrolment status, and nothing else. The
+    // registry is a Merkle tree of leaf commitments: we derive our own leaf,
+    // ask the indexer for a membership path for it, and check the revoked set.
+    // This cannot enumerate any other party.
+    async enrollmentStatus(role: Exclude<Role, 'regulator'>) {
+      const L = await readState();
+      const leaf = myLeaf();
+      const registry = L[`${role}s` as 'manufacturers' | 'importers' | 'pharmacies'];
+      const path = registry?.findPathForLeaf?.(leaf);
+      const enrolled = !!path;
+      const revoked = !!L.revoked?.member?.(leaf);
+      return { enrolled, revoked };
+    },
   };
 }
 
@@ -329,6 +345,11 @@ function readLocalUnitCodes(batchId: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** Unit codes this browser holds for a batch — the source for the QR sheet. */
+export function localUnitCodes(batchId: string): string[] {
+  return readLocalUnitCodes(batchId);
 }
 
 function toHex(bytes: Uint8Array): string {

@@ -29,6 +29,18 @@ function loadMnemonic(net: string): string {
   return JSON.parse(fs.readFileSync(file, 'utf8')).mnemonic;
 }
 
+function describeError(err: unknown): string {
+  const parts: string[] = [];
+  let e: any = err;
+  let depth = 0;
+  while (e && depth < 6) {
+    parts.push(e.message ?? String(e));
+    e = e.cause;
+    depth += 1;
+  }
+  return parts.join('  <-  ');
+}
+
 function ok(label: string, detail = ''): void {
   console.log(`  [ok]   ${label}${detail ? ` — ${detail}` : ''}`);
 }
@@ -115,7 +127,7 @@ async function main(): Promise<void> {
     const dust = await ensureDust(ctx);
     ok('DUST spendable', `${dust}`);
   } catch (err) {
-    bad('wallet', (err as Error).message);
+    bad('wallet', describeError(err));
     process.exitCode = 1;
   } finally {
     await ctx.wallet.stop().catch(() => {});
