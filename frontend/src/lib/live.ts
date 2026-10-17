@@ -1,7 +1,12 @@
 // Live mode: real contract calls on a Midnight network via the connected
-// wallet and a prover. The wallet pays DUST fees and submits the transaction;
-// proving is delegated to the wallet when it supports it, otherwise it falls
-// back to an HTTP proof server.
+// wallet. The wallet pays DUST fees, balances and submits the transaction;
+// proving is delegated to the wallet when it exposes a proving provider and
+// otherwise falls back to an HTTP proof server.
+//
+// The provider wiring mirrors Midnight's own browser example
+// (https://github.com/midnightntwrk/example-bboard): an in-memory private-state
+// provider (classic-level cannot run in a browser), FetchZkConfigProvider over
+// the app's own /zk/medpass artifacts, and the indexer for public state.
 //
 // NOTE: the contract reads the acting party from the `caller_sk` WITNESS, and
 // the wallet connector never reveals the wallet's secret key. This app therefore
@@ -13,15 +18,15 @@ import { Contract, PartyRole, ledger } from '@medpass/contract';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { FetchZkConfigProvider } from '@midnight-ntwrk/midnight-js-fetch-zk-config-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { buildUnitTree, participantId, partyLeaf } from '@medpass/simulator';
 import type { ConnectedWallet } from './wallet';
+import { inMemoryPrivateStateProvider } from './private-state';
 import { participantIdBytes } from './identity';
-import { bytesToHex, hexToBytes, unitCodeToBytes } from './format';
+import { bytesToHex, hexToBytes, unitCodeFromBytes, unitCodeToBytes } from './format';
 import { resolveNetwork } from './network';
-import type { LedgerView, Role, ScanResult } from './types';
+import type { BatchView, LedgerView, Role, ScanResult, TxStage } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
@@ -31,7 +36,8 @@ export interface LiveContext {
   contractAddress: string;
   identitySecret: Uint8Array;
   identityParticipantId: string;
-  privateStatePassword: string;
+  /** Called as the transaction moves through its stages. */
+  onStage?: (stage: TxStage) => void;
 }
 
 export interface LiveSession {
@@ -54,7 +60,7 @@ const ROLE_ENUM: Record<Exclude<Role, 'regulator'>, PartyRole> = {
   pharmacy: PartyRole.PHARMACY,
 };
 
-const ZK_PATH = `${window.location.origin}/zk/medpass`;
+const PARTY_STATE_ID = 'medpass';
 
 interface WitnessRefs {
   secret: Uint8Array;
@@ -68,6 +74,8 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
   const network = resolveNetwork(ctx.wallet.networkId || 'preprod');
   setNetworkId(network.id);
 
+  const stage = (s: TxStage) => ctx.onStage?.(s);
+
   const refs: WitnessRefs = { secret: ctx.identitySecret };
   const compiledContract = CompiledContract.make('medpass', Contract).pipe(
     CompiledContract.withWitnesses({
@@ -79,14 +87,16 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
     } as Any),
   ) as Any;
 
-  const zkConfigProvider = new FetchZkConfigProvider(ZK_PATH, fetch.bind(window));
+  // FetchZkConfigProvider requests `${base}/keys/<circuit>.prover` and
+  // `${base}/zkir/<circuit>.bzkir`; the vite plugin serves src/managed/medpass
+  // at exactly that path (dev) and copies it into dist (build).
+  const zkConfigProvider = new FetchZkConfigProvider(`${window.location.origin}/zk/medpass`, fetch.bind(window));
+
+  const privateStateProvider = inMemoryPrivateStateProvider<string, Any>();
   const proofProvider = await buildProofProvider(ctx.wallet, zkConfigProvider, network.proofServerUri);
 
   const providers: Any = {
-    privateStateProvider: levelPrivateStateProvider({
-      accountId: ctx.wallet.address,
-      privateStoragePasswordProvider: () => ctx.privateStatePassword,
-    }),
+    privateStateProvider,
     publicDataProvider: indexerPublicDataProvider(ctx.wallet.indexerUri, ctx.wallet.indexerWsUri, WebSocket as Any),
     zkConfigProvider,
     proofProvider,
@@ -94,12 +104,14 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
       getCoinPublicKey: () => ctx.wallet.coinPublicKey,
       getEncryptionPublicKey: () => ctx.wallet.encryptionPublicKey,
       async balanceTx(tx: Any) {
+        stage('balancing');
         const res = await ctx.wallet.api.balanceUnsealedTransaction(toHex(tx.serialize()));
         return tx.constructor.deserialize('signature', 'proof', 'binding', fromHex(res.tx));
       },
     },
     midnightProvider: {
       async submitTx(tx: Any) {
+        stage('submitting');
         await ctx.wallet.api.submitTransaction(toHex(tx.serialize()));
         const ids = tx.identifiers?.();
         return (ids && (ids.first ?? ids[0])) || '';
@@ -111,10 +123,13 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
   let found: Any;
 
   const join = async (addr: string) => {
+    // The provider scopes private state by contract address; midnight-js calls
+    // this itself on deploy, but a join needs it up front.
+    privateStateProvider.setContractAddress(addr as Any);
     found = await findDeployedContract(providers, {
       contractAddress: addr,
       compiledContract,
-      privateStateId: 'medpass',
+      privateStateId: PARTY_STATE_ID,
       initialPrivateState: {},
     });
     address = addr;
@@ -124,7 +139,9 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
 
   async function call(name: string, args: unknown[]): Promise<string> {
     if (!found) throw new Error('No contract session. Deploy or join a contract first.');
+    stage('building');
     const txData = await found.callTx[name](...args);
+    stage('finalized');
     return String(txData?.public?.txId ?? txData?.txId ?? '');
   }
 
@@ -143,11 +160,20 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
     return partyLeaf(participantId(ctx.identitySecret));
   }
 
-  async function scan(batchId: string, unitCode: string, circuit: 'verify' | 'dispense', successDetail: string): Promise<ScanResult> {
+  async function scan(
+    batchId: string,
+    unitCode: string,
+    circuit: 'verify' | 'dispense',
+    successDetail: string,
+  ): Promise<ScanResult> {
     try {
       refs.pharmacyPath = await registryPath('pharmacies', myLeaf());
       refs.unitCode = unitCodeToBytes(unitCode);
       const L = await readState();
+      // The unit's Merkle path is private state the scanning party supplies. The
+      // manufacturer's unit sheet is the source of truth; when this browser does
+      // not hold it (a different device scanning the pack), fall back to a
+      // well-formed placeholder, which the circuit rejects as NOT_IN_BATCH.
       const codes = readLocalUnitCodes(batchId);
       const tree = buildUnitTree(codes.map(unitCodeToBytes));
       const index = codes.indexOf(unitCode);
@@ -166,6 +192,7 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
       const deployed = await deployContract(providers, { compiledContract, args: [] });
       found = deployed;
       address = String(deployed.deployTxData.public.contractAddress);
+      privateStateProvider.setContractAddress(address as Any);
       return address;
     },
 
@@ -189,7 +216,13 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
       refs.manufacturerPath = await registryPath('manufacturers', myLeaf());
       const L = await readState();
       const expiry = BigInt(Math.floor(Date.now() / 1000) + Math.round(expiryDays * 86_400));
-      const txId = await call('create_batch', [unitCodeToBytes(batchId), L.manufacturers.root(), tree.root, expiry, textTo32(metadata)]);
+      const txId = await call('create_batch', [
+        unitCodeToBytes(batchId),
+        L.manufacturers.root(),
+        tree.root,
+        expiry,
+        textTo32(metadata),
+      ]);
       rememberUnitCodes(batchId, unitCodes);
       return txId;
     },
@@ -198,17 +231,44 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
       scan(batchId, unitCode, 'verify', 'Manufacturer verified, imported through an authorized channel, not recalled.'),
     dispense: (batchId, unitCode) => scan(batchId, unitCode, 'dispense', 'Dispensed. The unit is now consumed on-chain.'),
 
+    // The ledger is read back from the indexer, so the UI shows the real
+    // on-chain state rather than a local mirror.
     async readLedger(): Promise<LedgerView> {
       const L = await readState();
+
+      const batches: BatchView[] = [];
+      for (const [key, rec] of iterateEntries(L.batches)) {
+        const id = unitCodeFromBytes(key);
+        const imported = L.imports.member(key);
+        const permit = imported ? L.imports.lookup(key) : undefined;
+        batches.push({
+          id,
+          manufacturer: bytesToHex(rec.manufacturer),
+          status: Number(rec.status) === 1 ? 'RECALLED' : 'ACTIVE',
+          expiry: Number(rec.expiry),
+          unitsRoot: bytesToHex(digestToBytes(rec.units_root)),
+          metadataHash: bytesToHex(rec.metadata_hash),
+          imported,
+          termsCommitment: permit ? bytesToHex(permit.terms_commitment) : undefined,
+          unitCount: readLocalUnitCodes(id).length,
+        });
+      }
+
+      const dispensed = iterateValues(L.dispensed).map((v) => bytesToHex(v));
+      const revoked = iterateValues(L.revoked).map((v) => bytesToHex(v));
+
       return {
         batchCount: Number(L.batch_count),
         partyCount: Number(L.party_count),
+        // Party registries are Merkle trees: the leaves are commitments, so the
+        // registry cannot be enumerated back into party identities. Membership
+        // is proved, never listed — which is the point of the design.
         manufacturers: [],
         importers: [],
         pharmacies: [],
-        batches: [],
-        dispensed: [],
-        revoked: [],
+        batches,
+        dispensed,
+        revoked,
       };
     },
   };
@@ -228,6 +288,28 @@ async function buildProofProvider(wallet: ConnectedWallet, zkConfigProvider: unk
     }
   }
   return httpClientProofProvider(proofServerUri, zkConfigProvider as Any);
+}
+
+// ---- ledger iteration ----
+
+function iterateEntries(map: Any): Array<[Uint8Array, Any]> {
+  if (!map || typeof map[Symbol.iterator] !== 'function') return [];
+  return [...map] as Array<[Uint8Array, Any]>;
+}
+
+function iterateValues(set: Any): Uint8Array[] {
+  if (!set || typeof set[Symbol.iterator] !== 'function') return [];
+  return [...set] as Uint8Array[];
+}
+
+function digestToBytes(d: { field: bigint }): Uint8Array {
+  let v = d.field;
+  const out = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
 }
 
 // ---- small utilities ----
@@ -283,9 +365,17 @@ function fail(batchId: string, unitCode: string, e: unknown): ScanResult {
     ['revoked', 'REVOKED', 'The scanning pharmacy is not in good standing.'],
     ['not registered', 'NOT_A_PHARMACY', 'The scanning pharmacy is not enrolled in the registry.'],
     ['no such batch', 'UNKNOWN', 'No such batch exists on-chain.'],
+    ['unknown batch', 'UNKNOWN', 'No such batch exists on-chain.'],
   ];
   for (const [needle, outcome, detail] of map) {
     if (m.includes(needle)) return { pharmacy: 'wallet', batchId, unitCode, outcome, detail, at: Date.now() };
   }
-  return { pharmacy: 'wallet', batchId, unitCode, outcome: 'UNKNOWN', detail: e instanceof Error ? e.message : String(e), at: Date.now() };
+  return {
+    pharmacy: 'wallet',
+    batchId,
+    unitCode,
+    outcome: 'UNKNOWN',
+    detail: e instanceof Error ? e.message : String(e),
+    at: Date.now(),
+  };
 }

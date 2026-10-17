@@ -12,14 +12,15 @@ const managed = resolve(repoRoot, 'src/managed/medpass');
 const shim = (name: string) => resolve(here, `node_modules/vite-plugin-node-polyfills/shims/${name}/dist/index.js`);
 
 // The Compact artifacts (prover/verifier keys + zkir) are produced by
-// `npm run build` in the repo root and gitignored. Serve them at /zk in dev and
-// copy them into the build output, so FetchZkConfigProvider loads them from the
-// app's own origin (no cross-origin artifact fetch).
+// `npm run build` in the repo root and committed under src/managed. Midnight's
+// FetchZkConfigProvider requests `${base}/keys/<circuit>.prover` and
+// `${base}/zkir/<circuit>.bzkir`, so we serve the medpass directory itself
+// (not its parent) at /zk/medpass in dev and copy it to the same path on build.
 function zkArtifacts(): Plugin {
   return {
     name: 'medpass-zk-artifacts',
     configureServer(server) {
-      server.middlewares.use('/zk', (req, res, next) => {
+      server.middlewares.use('/zk/medpass', (req, res, next) => {
         const rel = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '');
         const file = resolve(managed, rel);
         if (!file.startsWith(managed) || !existsSync(file)) return next();
@@ -73,7 +74,6 @@ export default defineConfig({
       '@midnight-ntwrk/midnight-js-fetch-zk-config-provider',
       '@midnight-ntwrk/midnight-js-http-client-proof-provider',
       '@midnight-ntwrk/midnight-js-indexer-public-data-provider',
-      '@midnight-ntwrk/midnight-js-level-private-state-provider',
       '@midnight-ntwrk/midnight-js-network-id',
       '@midnight-ntwrk/dapp-connector-api',
       '@midnight-ntwrk/midnight-js-dapp-connector-proof-provider',
@@ -81,6 +81,8 @@ export default defineConfig({
     alias: {
       '@medpass/contract': resolve(managed, 'contract/index.js'),
       '@medpass/simulator': resolve(repoRoot, 'tests/helpers/simulator.ts'),
+      // isomorphic-ws/browser.js has no named WebSocket export (see ws-shim.ts).
+      'isomorphic-ws': resolve(here, 'src/lib/ws-shim.ts'),
     },
   },
   server: {

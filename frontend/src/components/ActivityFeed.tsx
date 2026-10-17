@@ -1,4 +1,5 @@
 import { clockTime, shortHex } from '../lib/format';
+import { EXPLORER_TX } from '../lib/network';
 import type { Activity } from '../lib/types';
 
 export function ActivityFeed({ items, onClear }: { items: Activity[]; onClear: () => void }) {
@@ -22,7 +23,11 @@ export function ActivityFeed({ items, onClear }: { items: Activity[]; onClear: (
               <div className="body">
                 <div className="t">{a.title}</div>
                 {a.detail ? <div className="d">{a.detail}</div> : null}
-                {a.txId ? <div className="d mono">{shortHex(a.txId, 14, 10)}</div> : null}
+                {a.txId ? (
+                  <a className="d mono tx-link" href={EXPLORER_TX(a.txId)} target="_blank" rel="noreferrer">
+                    {shortHex(a.txId, 14, 10)} ↗
+                  </a>
+                ) : null}
               </div>
               <span className="time">{clockTime(a.at)}</span>
             </div>
@@ -32,3 +37,4 @@ export function ActivityFeed({ items, onClear }: { items: Activity[]; onClear: (
     </div>
   );
 }
+

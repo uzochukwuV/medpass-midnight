@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMedPass } from './contexts/useMedPass';
 import { ActivityFeed } from './components/ActivityFeed';
-import { Banner, Card, Copy, KV, Pill, Section } from './components/ui';
+import { Banner, Card, Copy, KV, Pill, Section, StageMeter } from './components/ui';
 import { RegulatorScreen } from './screens/RegulatorScreen';
 import { ManufacturerScreen } from './screens/ManufacturerScreen';
 import { ImporterScreen } from './screens/ImporterScreen';
@@ -212,12 +212,16 @@ export function App() {
           </span>
         </div>
       ) : null}
+
+      {mp.stage !== 'idle' ? <StageMeter stage={mp.stage} note={mp.busy ?? undefined} /> : null}
     </div>
   );
 }
 
 function WalletBar() {
-  const { mode, wallet, connect, disconnect } = useMedPass();
+  const { mode, wallet, wallets, connect, disconnect, balances, networkId } = useMedPass();
+  const [picking, setPicking] = useState(false);
+
   if (mode === 'demo') {
     return (
       <span className="wallet-chip">
@@ -226,17 +230,68 @@ function WalletBar() {
       </span>
     );
   }
+
   if (!wallet.connected) {
+    const usable = wallets.filter((w) => /^4\./.test(w.apiVersion));
     return (
-      <button className="btn primary small" disabled={wallet.connecting} onClick={() => void connect()}>
-        {wallet.connecting ? <span className="spinner" /> : '⬡'} {wallet.available ? 'Connect wallet' : 'Install a wallet'}
-      </button>
+      <div className="wallet-menu">
+        <button
+          className="btn primary small"
+          disabled={wallet.connecting}
+          onClick={() => (usable.length > 1 ? setPicking((p) => !p) : void connect(usable[0]?.key))}
+        >
+          {wallet.connecting ? <span className="spinner" /> : '⬡'}{' '}
+          {wallets.length === 0 ? 'Install a wallet' : usable.length > 1 ? 'Choose wallet' : 'Connect wallet'}
+        </button>
+        {picking && usable.length > 1 ? (
+          <div className="wallet-dropdown">
+            {usable.map((w) => (
+              <button
+                key={w.key}
+                className="wallet-option"
+                onClick={() => {
+                  setPicking(false);
+                  void connect(w.key);
+                }}
+              >
+                {w.icon ? <img src={w.icon} alt="" width={16} height={16} /> : null}
+                <span className="grow">{w.name}</span>
+                <span className="muted small">{w.apiVersion}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {wallet.error ? <div className="wallet-error">{wallet.error}</div> : null}
+      </div>
     );
   }
+
+  const dust = balances?.dust;
+  const faucet = NETWORKS[networkId]?.faucet;
   return (
-    <button className="wallet-chip on" onClick={disconnect} title="Click to disconnect">
-      <span className="dot" />
-      <span className="addr mono">{shortHex(wallet.address, 8, 6)}</span>
-    </button>
+    <div className="wallet-menu">
+      <button className="wallet-chip on" onClick={disconnect} title="Click to disconnect">
+        <span className="dot" />
+        <span className="addr mono">{shortHex(wallet.address, 8, 6)}</span>
+      </button>
+      <div className="wallet-balance">
+        {dust ? (
+          <span className="muted small">{dust.balance > 0n ? `${formatDust(dust.balance)} DUST` : 'no DUST'}</span>
+        ) : (
+          <span className="muted small">{wallet.walletName}</span>
+        )}
+        {dust && dust.balance === 0n && faucet ? (
+          <a className="tx-link small" href={faucet} target="_blank" rel="noreferrer">
+            get tNIGHT ↗
+          </a>
+        ) : null}
+      </div>
+    </div>
   );
+}
+
+function formatDust(v: bigint): string {
+  const whole = v / 1_000_000n;
+  const frac = v % 1_000_000n;
+  return frac === 0n ? whole.toLocaleString() : `${whole.toLocaleString()}.${String(frac).padStart(6, '0').slice(0, 2)}`;
 }
