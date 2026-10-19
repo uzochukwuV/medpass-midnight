@@ -41,7 +41,7 @@ export function RequireRole({ role, children }: { role: ParticipantRole; childre
 
 /** Enrolment status for the acting party, shown on each role home. */
 export function EnrolmentPanel({ role }: { role: ParticipantRole }) {
-  const { enrolment, identity, mode } = useMedPass();
+  const { enrolment, identity } = useMedPass();
   const status = enrolment(role);
   const state = !status.enrolled ? 'not enrolled' : status.revoked ? 'revoked' : 'active';
   const tone = state === 'active' ? 'ok' : state === 'revoked' ? 'bad' : 'neutral';
@@ -56,9 +56,7 @@ export function EnrolmentPanel({ role }: { role: ParticipantRole }) {
           <Pill tone={tone}>{state}</Pill>
         </div>
         <div className="hint" style={{ marginTop: 6 }}>
-          {mode === 'demo'
-            ? 'Demo mode acts as a fixed persona, so its status comes from the local ledger.'
-            : 'Your own status only — the registry cannot be enumerated by design.'}
+          Your own status only — the registry cannot be enumerated by design.
         </div>
         <div className="mono small muted" style={{ marginTop: 4 }}>
           {identity.participantId.slice(0, 20)}…

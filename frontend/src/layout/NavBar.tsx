@@ -5,9 +5,9 @@ import { NETWORKS } from '../lib/network';
 import { ROUTES, ROLE_NAV } from '../lib/routes';
 import { shortHex } from '../lib/format';
 
-/** Borderless top bar: logo left, role links centre-right, mode + wallet right. */
+/** Borderless top bar: logo left, role links centre-right, network + wallet right. */
 export function NavBar() {
-  const { mode, setMode, networkId, setNetworkId } = useMedPass();
+  const { networkId, setNetworkId } = useMedPass();
   return (
     <header className="topbar">
       <div className="topbar-inner">
@@ -35,29 +35,19 @@ export function NavBar() {
         </nav>
 
         <div className="row tight">
-          <div className="mode-toggle" role="group" aria-label="Run mode">
-            <button aria-pressed={mode === 'demo'} onClick={() => setMode('demo')}>
-              Demo
-            </button>
-            <button aria-pressed={mode === 'live'} onClick={() => setMode('live')}>
-              Live
-            </button>
-          </div>
-          {mode === 'live' ? (
-            <select
-              className="small"
-              style={{ width: 'auto' }}
-              value={networkId}
-              onChange={(e) => setNetworkId(e.target.value)}
-              aria-label="Network"
-            >
-              {Object.values(NETWORKS).map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.label}
-                </option>
-              ))}
-            </select>
-          ) : null}
+          <select
+            className="small"
+            style={{ width: 'auto' }}
+            value={networkId}
+            onChange={(e) => setNetworkId(e.target.value)}
+            aria-label="Network"
+          >
+            {Object.values(NETWORKS).map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.label}
+              </option>
+            ))}
+          </select>
           <WalletBar />
         </div>
       </div>
@@ -65,15 +55,14 @@ export function NavBar() {
   );
 }
 
-/** One line of orientation, always visible: mode, network, contract, counts. */
+/** One line of orientation, always visible: network, contract, counts. */
 export function StatusStrip() {
-  const { mode, networkId, ledger, contractAddress } = useMedPass();
+  const { networkId, ledger, contractAddress } = useMedPass();
   return (
     <div className="status-strip">
       <div className="status-strip-inner">
         <span>
-          <b>{mode === 'demo' ? 'Demo' : 'Live'}</b>
-          {mode === 'demo' ? ' — real circuits, in-browser' : ` — ${NETWORKS[networkId]?.label ?? networkId}`}
+          <b>{NETWORKS[networkId]?.label ?? networkId}</b>
         </span>
         <span>·</span>
         <span>

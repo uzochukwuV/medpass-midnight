@@ -8,7 +8,7 @@ import { ROUTES } from '../lib/routes';
  * and the only decorative element in the system: a sky-blue edge wash.
  */
 export function Landing() {
-  const { mode, ledger } = useMedPass();
+  const { ledger } = useMedPass();
   return (
     <>
       <section className="hero wash">
@@ -32,7 +32,7 @@ export function Landing() {
           <div className="chips">
             <span className="chip">
               <span className="dot" />
-              {mode === 'demo' ? 'Demo — real circuits, in-browser' : 'Live — wallet + prover'}
+              Live — wallet + prover
             </span>
             <span className="chip">{ledger?.batchCount ?? 0} batches</span>
             <span className="chip">{ledger?.partyCount ?? 0} parties</span>

@@ -62,6 +62,13 @@ const ROLE_ENUM: Record<Exclude<Role, 'regulator'>, PartyRole> = {
   pharmacy: PartyRole.PHARMACY,
 };
 
+/** Ledger field per registry. Spelled out because `${role}s` yields "pharmacys". */
+const REGISTRY: Record<Exclude<Role, 'regulator'>, 'manufacturers' | 'importers' | 'pharmacies'> = {
+  manufacturer: 'manufacturers',
+  importer: 'importers',
+  pharmacy: 'pharmacies',
+};
+
 const PARTY_STATE_ID = 'medpass';
 
 interface WitnessRefs {
@@ -262,12 +269,6 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
       return {
         batchCount: Number(L.batch_count),
         partyCount: Number(L.party_count),
-        // Party registries are Merkle trees: the leaves are commitments, so the
-        // registry cannot be enumerated back into party identities. Membership
-        // is proved, never listed — which is the point of the design.
-        manufacturers: [],
-        importers: [],
-        pharmacies: [],
         batches,
         dispensed,
         revoked,
@@ -281,7 +282,7 @@ export async function createLiveSession(ctx: LiveContext): Promise<LiveSession> 
     async enrollmentStatus(role: Exclude<Role, 'regulator'>) {
       const L = await readState();
       const leaf = myLeaf();
-      const registry = L[`${role}s` as 'manufacturers' | 'importers' | 'pharmacies'];
+      const registry = L[REGISTRY[role]];
       const path = registry?.findPathForLeaf?.(leaf);
       const enrolled = !!path;
       const revoked = !!L.revoked?.member?.(leaf);

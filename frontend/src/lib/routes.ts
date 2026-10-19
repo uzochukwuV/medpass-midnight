@@ -10,11 +10,9 @@ export const ROUTES = {
   pharmacy: '/app/pharmacy',
   scanHistory: '/app/pharmacy/history',
   regulator: '/app/regulator',
-  party: (partyId: string) => `/app/regulator/parties/${encodeURIComponent(partyId)}`,
 } as const;
 
 export const BATCH_ROUTE = '/app/manufacturer/batches/:batchId';
-export const PARTY_ROUTE = '/app/regulator/parties/:partyId';
 
 export interface NavItem {
   to: string;

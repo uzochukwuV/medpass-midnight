@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useMedPass } from '../../contexts/useMedPass';
-import { Banner, Card, EmptyState, KV, PageHeader, Pill, Section } from '../../components/ui';
+import { Card, EmptyState, KV, PageHeader, Pill, Section } from '../../components/ui';
 import { BatchTable } from '../../components/tables';
 import { EnrolmentPanel } from '../../components/RequireRole';
 
 export function ImporterHome() {
-  const { batches, recordImport, busy, mode } = useMedPass();
+  const { batches, recordImport, busy } = useMedPass();
   const [selected, setSelected] = useState('');
   const [terms, setTerms] = useState('terms:channel-2026');
 
@@ -107,13 +107,6 @@ export function ImporterHome() {
               </div>
             </div>
           </div>
-          {mode === 'demo' ? (
-            <div style={{ marginTop: 16 }}>
-              <Banner tone="info" title="Demo signing party">
-                Demo mode records the import as the persona “GlobalMed Imports”.
-              </Banner>
-            </div>
-          ) : null}
         </Card>
       </Section>
     </>

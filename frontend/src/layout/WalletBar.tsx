@@ -12,17 +12,8 @@ function formatDust(v: bigint): string {
 }
 
 export function WalletBar() {
-  const { mode, wallet, wallets, connect, disconnect, balances, networkId } = useMedPass();
+  const { wallet, wallets, connect, disconnect, balances, networkId } = useMedPass();
   const [picking, setPicking] = useState(false);
-
-  if (mode === 'demo') {
-    return (
-      <span className="chip">
-        <span className="dot" />
-        demo identity
-      </span>
-    );
-  }
 
   if (!wallet.connected) {
     const usable = wallets.filter((w) => /^4\./.test(w.apiVersion));

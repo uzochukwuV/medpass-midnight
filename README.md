@@ -144,14 +144,14 @@ npm run demo         # narrated end-to-end walkthrough in the terminal
 npm run web          # three-view demo UI at http://localhost:12000
 ```
 
-### React demo app (browser)
+### React app (browser)
 
-`frontend/` is a single-page React app that runs the **real contract** in the
-browser — the same compiled circuits the tests use, executed through
-`@midnight-ntwrk/compact-runtime` with no wallet, node or proof server. Four
-role screens (regulator, manufacturer, importer, pharmacy) drive the full
-lifecycle; a pharmacy scan returns an *authentic*, *possible counterfeit* or
-*recalled* verdict.
+`frontend/` is a single-page React app that talks to the **real contract** on
+Midnight through a connected wallet: real proofs from the proof server, real
+transactions balanced with DUST and submitted to the network. Four role screens
+(regulator, manufacturer, importer, pharmacy) drive the full lifecycle; a
+pharmacy scan returns an *authentic*, *possible counterfeit* or *recalled*
+verdict.
 
 ```bash
 cd frontend
@@ -167,9 +167,10 @@ automatically on first run (a no-op afterwards), so the compiler must be on your
 `PATH` — install it per the Requirements section above. If it is missing, the
 script stops with an explanatory message rather than a cryptic Rollup error.
 
-The app also has a **Live** mode that connects to an injected Midnight wallet
-(`window.midnight`) and deploys/reads the contract through real providers; the
-default **Demo** mode needs no network.
+It joins the verified preprod deployment by default. To point it elsewhere, set
+`VITE_CONTRACT_ADDRESS`, or use the Join / Deploy controls on the overview page.
+Deploying from the browser makes the key held in that browser the regulator — see
+"Who the regulator is" above.
 
 The build produces **seven proving circuits**: `register_party`, `revoke_party`,
 `create_batch`, `record_import`, `recall_batch`, `verify`, `dispense`.
@@ -197,6 +198,56 @@ The runner deploys the contract, enrolls four parties, then drives
 batch, revokes a pharmacy, and reads the ledger back through the indexer — every
 step a finalized transaction. A record of the run (contract address, txIds,
 block heights, batch id) is written to `deployments/<network>.json`.
+
+#### Verified preprod deployment (2026-10-16)
+
+A full lifecycle was run against Midnight **preprod** with real proofs. Every
+step below is a finalized on-chain transaction; the contract state was read back
+through the indexer afterwards (`batch_count=1`, `party_count=4`, `batches=1`,
+`imports=1`, `dispensed=1`, `revoked=1`). The record is committed as
+`deployments/preprod.json`.
+
+- **Contract address:** `a8d42dcd354f0a9cb5dfbfc0f38836b907e31f2c8e4533b9f3914e9e84d4bdc3`
+- **Deploy block:** `2998970` (recorded at run time; the deployment itself lands a few blocks later)
+- **Batch id:** `05743461c4ef0c5475f7e34b11d1ef6554e83f373ced0d93a3f77bcb330fd18c`
+- **Run at:** `2026-10-16T00:53:48Z`
+
+| Step | Transaction id |
+|---|---|
+| `deploy` | `00f42c63d48d8b2e9a47eb978af39a36fcd1dfb337bb372d9b2c763a4ea3b146f3` |
+| `register:manufacturer` | `00ef5da768e8aa77cd7f44771bd0b264c58f4b1b8777567e67fe75561ce7a4edcf` |
+| `register:importer` | `00f9a58b8e3f14e15b021911d37f4839526b663159e224dc804b832188335f3743` |
+| `register:pharmacyA` | `00598fd701d5b0f5f42fa9c78352b9b3023b0712ff3a44180260d341820760262c` |
+| `register:pharmacyB` | `00979ddbf0bb17393a2e821bf3b018ff0212196745ad597f9cbb6f778e70eb1b16` |
+| `create_batch` | `00db574819965fc865db38b3ac40c90c52c80602b68f2dda656ec2338cfd6cf163` |
+| `record_import` | `000e004cb535f752632e2fa716b88ca57142488051deb1c555f4269a9297a29b25` |
+| `verify` (scan) | `00e8d2e2a25052cb8b61a70d38c616c3c55ddc7895ddbdd259e9d51569672eae33` |
+| `dispense` | `008a0c1b16b0e9e808ae65ffac09c19bce085a6e560a2a0fa1ee6942fda9b89db7` |
+| `recall_batch` | `00e8870b4fa78631a43392b830c60ab11ea87867fe545a34547b46ce9eb5f1df17` |
+| `revoke_party` | `009099333581cbc2e56961a85c5f88003dc0435309170383183d561aae25d2f50b` |
+
+The frontend joins this address by default (`frontend/src/lib/network.ts`), so
+`npm run dev` connects to the live preprod deployment unless
+`VITE_CONTRACT_ADDRESS` overrides it.
+
+#### Who the regulator is
+
+The constructor seals `regulator = participant_id(caller_sk())`, so **whoever's
+key deploys the contract is the regulator** and nothing can reassign it. Two
+things follow, and they are easy to get wrong:
+
+- `caller_sk` is a **witness**, not the wallet. The wallet connector never
+  reveals its secret key, so the wallet cannot be the regulator. The frontend
+  holds its own 32-byte key in `localStorage` (`medpass.identity.v1`) and that
+  key is what the constructor seals.
+- The lifecycle runner uses a known dev key,
+  `sha256("medpass:regulator")` =
+  `16f0a3fdce6aff5e65cc94837ce0d6ba6ea7bab825f6a6ec224b302093d0470e`
+  (participant id `7b784e908f7534e6dd00393ff21d27426e5a8bced6ef95a9ffeea5f5375673dd`).
+  This is public in the source tree — fine for a devnet, never for anything real.
+
+The enrolment page can import a secret key, so an operator can load a chosen
+regulator key before deploying rather than accepting a random one.
 
 #### Network endpoints (as of October 2026)
 

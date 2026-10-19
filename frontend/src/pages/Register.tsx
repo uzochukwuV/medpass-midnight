@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMedPass } from '../contexts/useMedPass';
 import { Banner, Card, Copy, KV, PageHeader, Pill, Section } from '../components/ui';
-import { ROLE_META } from '../lib/personas';
+import { ROLE_META } from '../lib/roles';
 import { ROUTES } from '../lib/routes';
 import { shortHex, timeAgo } from '../lib/format';
 import type { Role } from '../lib/types';
@@ -22,23 +22,34 @@ export function Register() {
   const {
     identity,
     enrolment,
-    actingPartyId,
     pendingRequests,
     requestEnrolment,
     dismissRequest,
     register,
     busy,
-    mode,
+    importKey,
+    regenerate,
   } = useMedPass();
   const [params, setParams] = useSearchParams();
   const initial = (params.get('role') as ParticipantRole | null) ?? 'pharmacy';
   const [role, setRole] = useState<ParticipantRole>(ROLES.includes(initial) ? initial : 'pharmacy');
+  const [pastedKey, setPastedKey] = useState('');
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   const status = enrolment(role);
-  const partyId = actingPartyId(role);
+  const partyId = identity.participantId;
   const pending = pendingRequests.find((r) => r.role === role && r.partyId === partyId);
   const requestString = `medpass:enrol role=${role} party=${partyId}`;
-  const demo = mode === 'demo';
+
+  const applyKey = () => {
+    try {
+      importKey(pastedKey);
+      setPastedKey('');
+      setKeyError(null);
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <>
@@ -49,25 +60,71 @@ export function Register() {
         lede="The regulator is sealed into the contract at deploy and only it can enrol or revoke a party. Pick a role, raise a request, and the regulator approves it on their desk."
       />
 
-      <Section title="The party that acts" sub={demo ? 'the demo persona for this role' : 'this device'}>
+      <Section title="The party that acts" sub="this device's identity">
         <Card>
           <KV k="participant id" v={shortHex(partyId, 20, 12)} />
-          <KV k="acting as" v={demo ? 'a fixed demo persona' : 'this browser\u2019s identity'} mono={false} />
-          <KV k="mode" v={mode} mono={false} />
-          {demo ? (
-            <p className="hint" style={{ marginTop: 12 }}>
-              Demo mode signs as a fixed persona, so the regulator enrols the persona's id — not this
-              device's. In live mode the acting party is this browser's own identity.
-            </p>
-          ) : null}
+          <KV k="acting as" v={identity.label} mono={false} />
           <div className="row" style={{ marginTop: 16 }}>
             <Copy value={partyId} label="Copy party id" />
           </div>
+          <p className="hint" style={{ marginTop: 12 }}>
+            The contract reads the acting party from the <span className="mono">caller_sk</span>{' '}
+            witness. Your wallet never reveals its secret key, so MedPass keeps its own 32-byte key in
+            this browser and the regulator enrols <span className="mono">participant_id(secret)</span>.
+            That same key is what the contract seals as the regulator if you deploy.
+          </p>
+        </Card>
+      </Section>
+
+      <Section title="Regulator key" sub="import or generate">
+        <Card>
+          <p className="hint">
+            Whoever's key deploys the contract becomes the regulator — the constructor seals{' '}
+            <span className="mono">participant_id(caller_sk())</span> and nothing can change it
+            afterwards. Import the key you want to hold that authority, or generate a fresh one before
+            you deploy.
+          </p>
+          <div className="field" style={{ marginTop: 16 }}>
+            <label htmlFor="import-key">Import a secret key</label>
+            <input
+              id="import-key"
+              type="text"
+              className="mono"
+              value={pastedKey}
+              placeholder="64 hex characters"
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => {
+                setPastedKey(e.target.value);
+                setKeyError(null);
+              }}
+            />
+            <span className="help">
+              The 32-byte key, hex. This replaces the key in this browser — it cannot be undone except
+              by importing the old key back.
+            </span>
+          </div>
+          {keyError ? <Banner tone="warn" title="Not a valid key">{keyError}</Banner> : null}
+          <div className="row">
+            <button className="btn primary" disabled={!pastedKey.trim()} onClick={applyKey}>
+              Import key
+            </button>
+            <button className="btn ghost" onClick={regenerate}>
+              Generate a new key
+            </button>
+          </div>
           <details className="tech">
-            <summary>This device's identity</summary>
+            <summary>Back up the current key</summary>
             <div style={{ marginTop: 8 }}>
-              <KV k="participant id" v={shortHex(identity.participantId, 20, 12)} />
-              <KV k="secret key" v="never leaves this browser" mono={false} />
+              <KV k="secret key" v={shortHex(identity.secretKey, 12, 8)} />
+              <KV k="participant id" v={shortHex(identity.participantId, 12, 8)} />
+              <div className="row" style={{ marginTop: 8 }}>
+                <Copy value={identity.secretKey} label="Copy secret key" />
+              </div>
+              <p className="hint" style={{ marginTop: 8 }}>
+                Keep this out of shared channels. Anyone holding it can act as this identity, and the
+                regulator's key cannot be recovered or replaced once a contract is deployed.
+              </p>
             </div>
           </details>
         </Card>
@@ -144,7 +201,7 @@ export function Register() {
               <button
                 className="btn primary"
                 disabled={!!busy}
-                onClick={() => requestEnrolment(role, demo ? 'demo persona' : identity.label)}
+                onClick={() => requestEnrolment(role, identity.label)}
               >
                 Request enrolment
               </button>

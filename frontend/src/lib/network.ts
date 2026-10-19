@@ -6,7 +6,7 @@ const q = (base: string) => (BLOCKFROST ? `${base}?project_id=${BLOCKFROST}` : b
 /**
  * Endpoint configuration, mirroring scripts/shared/network.ts. When the wallet
  * is connected we prefer the URIs the wallet reports via getConfiguration();
- * these are the fallback (and what demo mode shows).
+ * these are the fallback.
  */
 export const NETWORKS: Record<string, NetworkConfig> = {
   preprod: {
@@ -41,7 +41,11 @@ export function resolveNetwork(id: string): NetworkConfig {
 
 export const DEFAULT_NETWORK = (import.meta.env.VITE_NETWORK as string | undefined) ?? 'preprod';
 
-/** The contract verified on preprod in the last deployment run. */
+/**
+ * The verified preprod deployment (deployments/preprod.json). The app joins this
+ * contract by default; "Deploy new" replaces it at runtime. Override with
+ * VITE_CONTRACT_ADDRESS when pointing at a different deployment.
+ */
 export const DEPLOYED_ADDRESS =
   (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ??
   'a8d42dcd354f0a9cb5dfbfc0f38836b907e31f2c8e4533b9f3914e9e84d4bdc3';

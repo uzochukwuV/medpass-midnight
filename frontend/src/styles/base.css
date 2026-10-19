@@ -349,27 +349,6 @@ textarea { resize: vertical; }
 }
 .status-strip b { color: var(--ink); font-weight: var(--weight-medium); }
 
-/* ---- mode toggle ---- */
-.mode-toggle {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-buttons);
-  padding: 3px;
-  gap: 3px;
-}
-.mode-toggle button {
-  border: 0;
-  background: transparent;
-  color: var(--ink-2);
-  font-family: var(--font-sans);
-  font-size: var(--text-body-sm);
-  font-weight: var(--weight-medium);
-  padding: 6px 16px;
-  border-radius: var(--radius-buttons);
-  cursor: pointer;
-}
-.mode-toggle button[aria-pressed='true'] { background: var(--ink); color: var(--color-paper-white); }
-
 /* ---- misc ---- */
 .glyph { color: var(--color-sky-highlight); margin-right: 8px; }
 .tech { margin-top: var(--spacing-16); }

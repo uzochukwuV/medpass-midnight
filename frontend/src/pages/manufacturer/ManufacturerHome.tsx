@@ -9,16 +9,15 @@ import { ROUTES } from '../../lib/routes';
 const DEFAULT_CODES = ['AMX-2026-01-0001', 'AMX-2026-01-0002', 'AMX-2026-01-0003', 'AMX-2026-01-0004'];
 
 export function ManufacturerHome() {
-  const { batches, createBatch, recall, busy, mode } = useMedPass();
+  const { batches, createBatch, recall, busy } = useMedPass();
   const [batchId, setBatchId] = useState('AMX-2026-02');
   const [codesText, setCodesText] = useState(DEFAULT_CODES.join('\n'));
   const [expiryDays, setExpiryDays] = useState(365);
   const [metadata, setMetadata] = useState('meta:amoxicillin-500mg');
 
   const codes = useMemo(() => codesText.split('\n').map((c) => c.trim()).filter(Boolean), [codesText]);
-  // Demo mode has a single manufacturer, so every batch is its own. In live
-  // mode the record holds a commitment, not a persona, so the list is the
-  // ledger's — the heading says so rather than pretending to filter.
+  // The batch record holds a commitment, not an identity, so this list is the
+  // ledger's rather than a per-manufacturer filter. The heading says so.
   const mine = batches;
 
   const onCreate = () => {
@@ -95,12 +94,9 @@ export function ManufacturerHome() {
             linkTo={(b) => ROUTES.batch(b.id)}
             empty="No batches yet."
           />
-          {mode === 'demo' ? (
-            <p className="hint" style={{ marginTop: 16 }}>
-              Demo mode signs as the persona “Acme Pharma Ltd”. A batch becomes dispensable only after
-              an importer records it.
-            </p>
-          ) : null}
+          <p className="hint" style={{ marginTop: 16 }}>
+            A batch becomes dispensable only after an importer records it.
+          </p>
         </Card>
       </Section>
 

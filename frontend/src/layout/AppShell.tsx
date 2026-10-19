@@ -5,7 +5,7 @@ import { StageMeter } from '../components/ui';
 
 /** The workspace chrome: nav, orientation strip, routed page, stage meter. */
 export function AppShell() {
-  const { busy, stage, mode } = useMedPass();
+  const { busy, stage } = useMedPass();
   return (
     <div>
       <NavBar />
@@ -17,7 +17,7 @@ export function AppShell() {
             <span>
               <b>{busy}</b>
             </span>
-            <span>{mode === 'live' ? 'proving and submitting…' : 'running the circuit…'}</span>
+            <span>proving and submitting…</span>
           </div>
         </div>
       ) : null}

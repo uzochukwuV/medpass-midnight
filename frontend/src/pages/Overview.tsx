@@ -18,9 +18,9 @@ export function Overview() {
         lede="What is actually on-chain right now, what this browser holds, and every transaction this session has produced."
       />
 
-      {mp.mode === 'live' && !mp.wallet.connected ? (
+      {!mp.wallet.connected ? (
         <div className="section">
-          <Banner tone="warn" title="Live mode needs a Midnight wallet">
+          <Banner tone="warn" title="Connect a Midnight wallet to begin">
             Install Lace (Midnight edition) or 1AM, then connect. The wallet pays DUST fees and submits
             transactions; the app's own identity signs the contract call.
           </Banner>
@@ -35,8 +35,7 @@ export function Overview() {
               <Stat n={mp.ledger?.partyCount ?? 0} l="parties enrolled" />
             </div>
             <KV k="address" v={shortHex(mp.contractAddress, 12, 10)} />
-            <KV k="mode" v={mp.mode} mono={false} />
-            <KV k="network" v={mp.mode === 'live' ? NETWORKS[mp.networkId]?.label ?? mp.networkId : 'none needed'} mono={false} />
+            <KV k="network" v={NETWORKS[mp.networkId]?.label ?? mp.networkId} mono={false} />
             <KV k="dispensed" v={String(mp.ledger?.dispensed.length ?? 0)} />
             <div className="row" style={{ marginTop: 16 }}>
               <Copy value={mp.contractAddress} label="Copy address" />
@@ -44,29 +43,32 @@ export function Overview() {
                 ↻ Refresh
               </button>
             </div>
-            {mp.mode === 'live' ? (
-              <div style={{ marginTop: 16 }}>
-                <div className="field">
-                  <label htmlFor="join-address">Join another contract</label>
-                  <input
-                    id="join-address"
-                    type="text"
-                    className="mono"
-                    value={mp.contractAddress}
-                    onChange={(e) => mp.setContractAddress(e.target.value)}
-                    placeholder="contract address"
-                  />
-                </div>
-                <div className="row">
-                  <button className="btn small" disabled={!!mp.busy} onClick={() => void mp.join(mp.contractAddress)}>
-                    Join
-                  </button>
-                  <button className="btn small primary" disabled={!!mp.busy} onClick={() => void mp.deploy()}>
-                    Deploy new
-                  </button>
-                </div>
+            <div style={{ marginTop: 16 }}>
+              <div className="field">
+                <label htmlFor="join-address">Contract address</label>
+                <input
+                  id="join-address"
+                  type="text"
+                  className="mono"
+                  value={mp.contractAddress}
+                  onChange={(e) => mp.setContractAddress(e.target.value)}
+                  placeholder="contract address"
+                />
               </div>
-            ) : null}
+              <div className="row">
+                <button className="btn small" disabled={!!mp.busy} onClick={() => void mp.join(mp.contractAddress)}>
+                  Join
+                </button>
+                <button className="btn small primary" disabled={!!mp.busy} onClick={() => void mp.deploy()}>
+                  Deploy new
+                </button>
+              </div>
+              <p className="hint" style={{ marginTop: 12 }}>
+                Joining the deployed contract uses it as-is. Deploying a new one seals{' '}
+                <span className="mono">participant_id(caller_sk())</span> of the key held in this
+                browser — that key becomes the regulator, and the choice cannot be undone.
+              </p>
+            </div>
           </Card>
 
           <Card className="span-2">
@@ -105,12 +107,12 @@ export function Overview() {
           <div className="grid cols-2" style={{ marginTop: 16 }}>
             <div>
               <KV k="participant id" v={shortHex(mp.identity.participantId, 16, 12)} />
-              <KV k="secret key" v="never leaves this browser" mono={false} />
+              <KV k="secret key" v="held in this browser only" mono={false} />
             </div>
             <div className="row" style={{ alignItems: 'flex-end' }}>
               <Copy value={mp.identity.participantId} label="Copy party id" />
               <Link className="btn small ghost" to={ROUTES.register}>
-                Enrolment →
+                Import / back up →
               </Link>
               <button className="btn small ghost" onClick={mp.regenerate}>
                 Regenerate

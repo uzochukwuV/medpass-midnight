@@ -1,19 +1,6 @@
 export type Role = 'regulator' | 'manufacturer' | 'importer' | 'pharmacy';
 
-export type RunMode = 'demo' | 'live';
-
 export type BatchStatusView = 'ACTIVE' | 'RECALLED';
-
-export interface Party {
-  id: string;
-  role: Role;
-  label: string;
-  /** Public handle the regulator enrols = participant_id(secretKey). */
-  participantId: string;
-  /** Demo persona secret key (32 bytes, hex). Never leaves the browser. */
-  secretKey: string;
-  revoked: boolean;
-}
 
 export interface BatchView {
   id: string;
@@ -52,9 +39,6 @@ export interface ScanResult {
 export interface LedgerView {
   batchCount: number;
   partyCount: number;
-  manufacturers: Party[];
-  importers: Party[];
-  pharmacies: Party[];
   batches: BatchView[];
   dispensed: string[];
   revoked: string[];

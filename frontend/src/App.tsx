@@ -11,8 +11,7 @@ import { ImporterHome } from './pages/importer/ImporterHome';
 import { PharmacyHome } from './pages/pharmacy/PharmacyHome';
 import { ScanHistory } from './pages/pharmacy/ScanHistory';
 import { RegulatorHome } from './pages/regulator/RegulatorHome';
-import { PartyDetail } from './pages/regulator/PartyDetail';
-import { BATCH_ROUTE, PARTY_ROUTE, ROUTES } from './lib/routes';
+import { BATCH_ROUTE, ROUTES } from './lib/routes';
 
 /**
  * HashRouter, not BrowserRouter: the app is served as static files from a
@@ -69,7 +68,6 @@ export function App() {
               }
             />
             <Route path={ROUTES.regulator} element={<RegulatorHome />} />
-            <Route path={PARTY_ROUTE} element={<PartyDetail />} />
             <Route path="*" element={<Navigate to={ROUTES.landing} replace />} />
           </Route>
         </Routes>

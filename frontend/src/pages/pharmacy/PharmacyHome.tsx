@@ -5,17 +5,15 @@ import { Card, EmptyState, PageHeader, Section } from '../../components/ui';
 import { QrScanner } from '../../components/QrScanner';
 import { VerdictCard } from '../../components/VerdictCard';
 import { EnrolmentPanel } from '../../components/RequireRole';
-import { PERSONAS } from '../../lib/personas';
 import { ROUTES } from '../../lib/routes';
 import { shortHex } from '../../lib/format';
 
 export function PharmacyHome() {
-  const { scan, lastScan, scans, batches, busy, mode, demoPharmacy, setDemoPharmacy } = useMedPass();
+  const { scan, lastScan, scans, batches, busy } = useMedPass();
   const [scanning, setScanning] = useState(false);
   const [unitCode, setUnitCode] = useState('');
   const [batchId, setBatchId] = useState('');
 
-  const pharmacies = Object.values(PERSONAS).filter((p) => p.role === 'pharmacy');
   const recent = scans.slice(0, 8);
 
   const runScan = async (code: string, batch: string, dispense: boolean) => {
@@ -44,20 +42,6 @@ export function PharmacyHome() {
         title="Scan a unit. Read the proof."
         accent="proof"
         lede="Point the camera at a unit QR code, or type the code. The scan proves the unit was made by the stated manufacturer, imported through an authorized channel and is not recalled — without revealing any of that data."
-        right={
-          mode === 'demo' ? (
-            <div className="field" style={{ marginBottom: 0, minWidth: 200 }}>
-              <label htmlFor="demo-pharmacy">Scanning as</label>
-              <select id="demo-pharmacy" value={demoPharmacy} onChange={(e) => setDemoPharmacy(e.target.value)}>
-                {pharmacies.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null
-        }
       />
 
       <Section title="Registration" sub="your standing with the regulator">

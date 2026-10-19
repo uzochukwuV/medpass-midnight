@@ -2,24 +2,19 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMedPass } from '../../contexts/useMedPass';
 import { Card, Copy, KV, PageHeader, Pill, Section, Stat } from '../../components/ui';
-import { PartyTable } from '../../components/tables';
-import { PERSONAS, ROLE_META } from '../../lib/personas';
+import { ROLE_META } from '../../lib/roles';
 import { ROUTES } from '../../lib/routes';
+import { isHex32 } from '../../lib/identity';
 import { shortHex, timeAgo } from '../../lib/format';
-import type { Party, Role } from '../../lib/types';
+import type { Role } from '../../lib/types';
 
 type ParticipantRole = Exclude<Role, 'regulator'>;
 
 export function RegulatorHome() {
-  const { ledger, identity, register, revoke, reRegister, busy, mode, pendingRequests, dismissRequest } = useMedPass();
+  const { ledger, identity, register, revoke, busy, pendingRequests, dismissRequest } = useMedPass();
   const [partyId, setPartyId] = useState('');
   const [role, setRole] = useState<ParticipantRole>('pharmacy');
-
-  const groups: Array<{ role: ParticipantRole; title: string; rows: Party[] }> = [
-    { role: 'manufacturer', title: 'Manufacturers', rows: ledger?.manufacturers ?? [] },
-    { role: 'importer', title: 'Importers', rows: ledger?.importers ?? [] },
-    { role: 'pharmacy', title: 'Pharmacies', rows: ledger?.pharmacies ?? [] },
-  ];
+  const idValid = isHex32(partyId);
 
   return (
     <>
@@ -47,8 +42,10 @@ export function RegulatorHome() {
               <div>
                 <h3>This device</h3>
                 <p className="hint" style={{ marginTop: 6 }}>
-                  In live mode this browser's identity must itself be the sealed regulator for these
-                  actions to prove. In demo mode the regulator persona signs.
+                  This browser's identity must itself be the sealed regulator for these actions to
+                  prove. The contract reads the acting party from the{' '}
+                  <span className="mono">caller_sk</span> witness, so the key here is what the
+                  constructor sealed when the contract was deployed.
                 </p>
               </div>
               <Pill tone="info">local only</Pill>
@@ -57,6 +54,9 @@ export function RegulatorHome() {
             <KV k="secret key" v="held in this browser only" mono={false} />
             <div className="row" style={{ marginTop: 16 }}>
               <Copy value={identity.participantId} label="Copy party id" />
+              <Link className="btn small ghost" to={ROUTES.register}>
+                Import or back up the key →
+              </Link>
             </div>
           </Card>
         </div>
@@ -117,8 +117,8 @@ export function RegulatorHome() {
       <Section title="Enrol a party" sub="when the id arrives out of band">
         <Card>
           <p className="hint">
-            Each entry commits a party id — the secret behind it never leaves its owner. Paste an id
-            from a request string, or leave it blank in demo mode to enrol a persona.
+            Each entry commits a party id — the secret behind it never leaves its owner. Paste the id
+            from a request string, or leave it blank to enrol this browser's own identity.
           </p>
           <div className="grid cols-2" style={{ marginTop: 16 }}>
             <div className="field">
@@ -139,15 +139,15 @@ export function RegulatorHome() {
                 placeholder={identity.participantId}
                 onChange={(e) => setPartyId(e.target.value)}
               />
-              <span className="help">
-                {mode === 'demo'
-                  ? 'Demo mode: leave blank to enrol a persona, or paste any party id.'
-                  : 'Must be participant_id(secret) of the party.'}
-              </span>
+              <span className="help">Must be participant_id(secret) of the party.</span>
             </div>
           </div>
           <div className="row">
-            <button className="btn primary" disabled={!!busy} onClick={() => void register(role, partyId || undefined)}>
+            <button
+              className="btn primary"
+              disabled={!!busy || (partyId.trim() !== '' && !idValid)}
+              onClick={() => void register(role, partyId || undefined)}
+            >
               {busy ? <span className="spinner" /> : '§'} Enrol {ROLE_META[role].label.toLowerCase()}
             </button>
             {partyId ? (
@@ -155,61 +155,48 @@ export function RegulatorHome() {
                 Clear
               </button>
             ) : null}
+            {partyId.trim() !== '' && !idValid ? (
+              <span className="hint">That id is not 64 hex characters.</span>
+            ) : null}
           </div>
         </Card>
       </Section>
 
-      <Section title="Registries" sub={mode === 'demo' ? 'the demo cast' : 'self-status only'}>
-        {mode === 'live' ? (
-          <Card>
-            <p className="hint">
-              In live mode a registry cannot be enumerated. It is a Merkle tree of leaf commitments, so
-              the contract can prove a party is a member without ever listing its members. Each party
-              checks its own status on the enrolment page; the regulator cannot dump the tree.
-            </p>
-            <div className="row" style={{ marginTop: 16 }}>
-              <Link className="btn small ghost" to={ROUTES.register}>
-                Open the enrolment page →
-              </Link>
-            </div>
-          </Card>
-        ) : (
-          <div className="grid auto-300">
-            {groups.map((g) => (
-              <Card key={g.role}>
-                <div className="row between" style={{ marginBottom: 12 }}>
-                  <h3>{g.title}</h3>
-                  <Pill tone="neutral">{g.rows.length}</Pill>
-                </div>
-                <PartyTable
-                  rows={g.rows}
-                  busy={!!busy}
-                  onRevoke={revoke}
-                  onRestore={reRegister}
-                  linkTo={(id) => ROUTES.party(id)}
-                />
-              </Card>
-            ))}
+      <Section title="Revoke a party" sub="strike off by id">
+        <Card>
+          <p className="hint">
+            Revocation makes a party's leaf inert: its membership proofs stop verifying, so it can no
+            longer create batches, record imports or dispense. The leaf is not deleted, so re-enrolling
+            the same id from above restores it.
+          </p>
+          <div className="row" style={{ marginTop: 16 }}>
+            <button
+              className="btn danger"
+              disabled={!!busy || !idValid}
+              onClick={() => void revoke(partyId.trim())}
+            >
+              Revoke this party id
+            </button>
+            <span className="hint">Uses the id in the field above.</span>
           </div>
-        )}
+        </Card>
       </Section>
 
-      {mode === 'demo' ? (
-        <Section title="Demo personas" sub="the fixed cast">
-          <Card>
-            <div className="grid auto-240">
-              {Object.values(PERSONAS).map((p) => (
-                <div key={p.id} className="list-row">
-                  <div className="grow">
-                    <div className="nm">{p.label}</div>
-                    <div className="id">{p.role}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </Section>
-      ) : null}
+      <Section title="Registries" sub="self-status only">
+        <Card>
+          <p className="hint">
+            A registry cannot be enumerated. It is a Merkle tree of leaf commitments, so the contract
+            can prove a party is a member without ever listing its members. Each party checks its own
+            status on the enrolment page; not even the regulator can dump the tree. To strike a party
+            off, enrol or revoke it by id above.
+          </p>
+          <div className="row" style={{ marginTop: 16 }}>
+            <Link className="btn small ghost" to={ROUTES.register}>
+              Open the enrolment page →
+            </Link>
+          </div>
+        </Card>
+      </Section>
     </>
   );
 }
